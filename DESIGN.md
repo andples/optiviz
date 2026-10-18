@@ -622,14 +622,36 @@ Deferred from M1: learning-rate schedules (noted as a deviation in AdamW), dragg
 re-run, problem thumbnails in the gallery, generated TS types (hand-kept in protocol.ts), ambient occlusion,
 the gradient field overlay beyond the single arrow.
 
-### M2: Scale on 2D
-- Basins map on the GPU (CPU fallback at smaller size). Many-start mode.
-- User-typed functions (§6.6).
-- Sweeps (parameter heatmaps).
-- The rest of the step debugger (§4.2): region and event stopping points, explanations, what-if branches,
-  stopping points set after the fact on a recorded trace.
-- First guided presets. Introduce Learn/Research modes here if a real conflict has appeared (§2).
-- Many-start throughput in threaded WASM: per-thread state instead of per-start allocation (docs/perf/m0.md).
+### M2: Scale, your own functions, and the full debugger (next)
+
+Goal: show what only real scale can show, let people bring their own function, and finish the debugger.
+In order (each a working, committed step):
+
+1. **Real-browser check of M1** (owner, Zen and Safari on the MacBook): WebGPU up, fps; fill §7.4's table; fix
+   anything found.
+2. **Basins map** (§4): run an optimizer from every pixel at once on the GPU (2048² starts), colour each pixel by
+   the minimum it reaches, shade by iterations taken, a separate colour for starts that diverge. First-order
+   optimizers as WGSL kernels (GD, momentum, Nesterov, Adam family), each kernel tested against the Rust run
+   (the M0 spike already agrees 100% on Himmelblau). CPU fallback at 512² for browsers without WebGPU.
+   Shown as a third view and as an overlay on the contour map.
+3. **Many-start mode**: N starts of one optimizer drawn as a swarm with fading trails; fix threaded-WASM
+   scaling by allocating per thread instead of per start (docs/perf/m0.md).
+4. **Your own functions** (§6.6): type f(x, y) with free symbols (a, b, …); a parser builds an expression graph,
+   which emits WGSL/GLSL for drawing and a bytecode (later a generated WASM module) for the engine, with
+   forward-mode differentiation for ∇f and ∇²f. Free symbols become coefficients with sliders, like the
+   built-in problems. Clear error messages pointing at the formula.
+5. **The rest of the debugger** (§4.2): stopping points on regions drawn on the surface and on events
+   (oscillation, a failed line search, stalling); short explanations at a stop ("the step is tiny because v̂ is
+   large…"); **what-if branches**: fork a run at iteration k with changed parameters and watch both; stopping
+   points set after the fact on the recorded trace.
+6. **Sweeps**: vary one or two parameters over a grid (e.g. η × β), run in parallel, show a heatmap of final f or
+   iterations to a tolerance; click a cell to open that run.
+7. **Learning-rate schedules** (deferred from M1): constant, step, cosine, warm-up; AdamW's η_t then follows.
+8. **First guided presets**: a handful of one-click setups that each show one idea ("Adam on a rotated bowl",
+   "momentum overshooting", "Newton on a saddle"). Decide on Learn/Research modes if a real conflict has appeared.
+
+Exit: a 2048² basins map renders in under 0.5 s on a laptop GPU (§8); a typed function works end to end with
+its coefficients; a what-if branch can be created from any stop.
 
 ### M3 onwards: families, chosen later
 Pick from the candidates in §3 (populations, sampling, TSP, clustering, ML, constrained/LP, min-max, fitting,

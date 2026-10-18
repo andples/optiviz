@@ -2,6 +2,7 @@
 
 - **What and why:** `DESIGN.md` (goals, UI direction, stack, architecture, perf targets, milestones).
 - **This file:** current state, gotchas, what to do next.
+- **Guide / milestone notes:** docs/guide.md (how to use the app), docs/milestones/m1.md (what M1 built).
 
 Repo: private GitHub `andples/optiviz`, branch `main`. `optiviz` is a working name.
 
@@ -51,5 +52,5 @@ DESIGN.md §7.4's support table. Next is M2.
 
 ## Next
 
-M2 (DESIGN.md §10): basins map on the GPU, many-start mode, user-typed functions, sweeps, the rest of the
-debugger (region/event stops, explanations, what-if branches), per-thread allocation for threaded WASM.
+M2 (DESIGN.md §10 lists the eight steps in order): real-browser check, basins map on the GPU, many-start mode,
+user-typed functions, the rest of the debugger (what-if branches etc.), sweeps, schedules, first presets.
