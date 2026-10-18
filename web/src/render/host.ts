@@ -86,6 +86,13 @@ export class RenderHost {
       case "zoom":
         this.camera.zoom(cmd.factor);
         break;
+      case "camera":
+        this.camera.setMode(cmd.mode);
+        this.dirty = true;
+        break;
+      case "keys":
+        this.camera.setKeys(cmd.keys);
+        break;
       case "theme":
         this.theme = cmd.theme;
         this.dirty = true;

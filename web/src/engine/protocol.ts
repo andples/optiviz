@@ -84,6 +84,8 @@ export type RenderCmd =
   | { type: "resize"; width: number; height: number; dpr: number }
   | { type: "orbit"; dx: number; dy: number }
   | { type: "zoom"; factor: number }
+  | { type: "camera"; mode: "orbit" | "free" }
+  | { type: "keys"; keys: { fwd: boolean; back: boolean; left: boolean; right: boolean; up: boolean; down: boolean; fast: boolean } }
   | { type: "theme"; theme: Theme };
 
 export interface RenderStats {

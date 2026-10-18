@@ -37,6 +37,11 @@
   let showInfo = $state(false);
   let showProblems = $state(false);
   let showCode = $state(false);
+  let camMode = $state<"orbit" | "free">("orbit");
+  const keys = { fwd: false, back: false, left: false, right: false, up: false, down: false, fast: false };
+  const KEYMAP: Record<string, keyof typeof keys> = {
+    ArrowUp: "fwd", ArrowDown: "back", ArrowLeft: "left", ArrowRight: "right", PageUp: "up", PageDown: "down",
+  };
 
   const problem = $derived(problems.find((p) => p.id === problemId));
   const opt = $derived(optimizers.find((o) => o.id === optId));
@@ -177,17 +182,51 @@
     session?.engine({ type: "param", key, value: v });
   }
 
+  function setCam(mode: "orbit" | "free") {
+    camMode = mode;
+    session?.render({ type: "camera", mode });
+  }
+  function sendKeys() {
+    session?.render({ type: "keys", keys: { ...keys } });
+  }
   function onKey(e: KeyboardEvent) {
     if ((e.target as HTMLElement)?.tagName === "INPUT") return;
+    const move = KEYMAP[e.key];
+    if (move) {
+      // the arrow keys fly the free camera; the first press switches to it
+      e.preventDefault();
+      if (camMode !== "free") setCam("free");
+      if (!keys[move] || keys.fast !== e.shiftKey) {
+        keys[move] = true;
+        keys.fast = e.shiftKey;
+        sendKeys();
+      }
+      return;
+    }
     if (e.key === " ") { e.preventDefault(); toggle(); }
-    else if (e.key === "ArrowRight") step();
+    else if (e.key === ".") step();
     else if (e.key === "r") restart();
-    else if (e.key === "Escape") showProblems = showInfo = false;
+    else if (e.key === "Escape") {
+      if (camMode === "free") setCam("orbit");
+      showProblems = showInfo = false;
+    }
+  }
+  function onKeyUp(e: KeyboardEvent) {
+    const move = KEYMAP[e.key];
+    if (move && keys[move]) {
+      keys[move] = false;
+      keys.fast = e.shiftKey;
+      sendKeys();
+    }
+  }
+  function releaseKeys() {
+    for (const k of Object.keys(keys) as (keyof typeof keys)[]) keys[k] = false;
+    sendKeys();
   }
 
 </script>
 
-<svelte:window onkeydown={onKey} />
+<svelte:window onkeydown={onKey} onkeyup={onKeyUp} onblur={releaseKeys} />
 
 <div class="stage" bind:this={host}>
   <canvas class="view" bind:this={canvas}></canvas>
@@ -202,6 +241,13 @@
       {/if}
     </button>
     <div class="right">
+      {#if camMode === "free"}
+        <button class="cam" onclick={() => setCam("orbit")} title="Back to the orbit camera (Esc)">
+          Free camera · ↑↓←→ move · PgUp/PgDn rise · drag to look · <b>orbit</b>
+        </button>
+      {:else}
+        <button class="icon" onclick={() => setCam("free")} title="Free camera (arrow keys)">✥</button>
+      {/if}
       <button class="icon" onclick={() => setTheme(theme === "light" ? "dark" : "light")} title="Light / dark">
         {theme === "light" ? "◐" : "◑"}
       </button>
@@ -266,7 +312,7 @@
   <footer class="bottom panel">
     <div class="controls">
       <button class="icon" onclick={toggle} title={running ? "Pause (space)" : "Play (space)"}>{running ? "❚❚" : "▶"}</button>
-      <button class="icon" onclick={step} title="One step (→)">⏵|</button>
+      <button class="icon" onclick={step} title="One step (.)">⏵|</button>
       <button class="icon" onclick={restart} title="Restart (r)">↺</button>
     </div>
     <div class="speeds" role="group" aria-label="Speed">
@@ -309,6 +355,8 @@
   .problem .name { font-weight: 600; font-size: 14px; }
   .problem .formula { color: var(--dim); }
   .right { display: flex; gap: 6px; }
+  .cam { height: 30px; padding: 0 10px; border-radius: 8px; font-size: 12px; color: var(--dim); background: var(--panel); border: 1px solid var(--rule); }
+  .cam b { color: var(--accent); font-weight: 600; }
   .icon { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; color: var(--dim); font-size: 14px; }
   .icon:hover, .icon.on { background: var(--panel); color: var(--ink); }
 

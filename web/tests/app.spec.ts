@@ -54,7 +54,7 @@ test("pause and single step", async ({ page }) => {
   const k = await iter(page);
   await page.waitForTimeout(300);
   expect(await iter(page)).toBe(k);
-  await page.getByTitle("One step (→)").click();
+  await page.getByTitle("One step (.)").click();
   await expect.poll(() => iter(page)).toBe(k + 1);
 });
 
@@ -67,4 +67,19 @@ test("switches problem and optimizer, and shows sourced pseudocode", async ({ pa
   await page.getByText("Show the algorithm").click();
   await expect(page.locator(".code")).toContainText("Polyak (1964)");
   await expect(page.locator(".code")).toContainText("Where the implementation differs");
+});
+
+test("arrow keys switch to the free camera and Esc returns to orbit", async ({ page }) => {
+  await open(page);
+  await page.keyboard.down("ArrowUp");
+  await page.waitForTimeout(700);
+  await page.keyboard.up("ArrowUp");
+  await expect(page.locator(".cam")).toContainText("Free camera");
+  await page.keyboard.down("ArrowLeft");
+  await page.waitForTimeout(300);
+  await page.keyboard.up("ArrowLeft");
+  await page.screenshot({ path: "test-results/freecam.png" });
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".cam")).toHaveCount(0);
+  await expect(page.locator(".error")).toHaveCount(0);
 });

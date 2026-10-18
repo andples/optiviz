@@ -200,7 +200,10 @@ Views are generic over a problem's **kind**, not written per algorithm. An algor
 
 - **Run controls:** play / pause, step one iteration, step one sub-step (a line search trial, one particle
   update), speed (iterations per frame up to "flat out"), restart with the same seed, new seed. All are buttons
-  in the bottom bar; keys (space, arrows, `r`, `n`) are shortcuts, never the only way.
+  in the bottom bar; keys (space, `.` to step, `r`, `n`) are shortcuts, never the only way.
+- **Cameras:** orbit (drag turns, wheel/pinch zooms) and a **free camera** (owner, 2026-10-18): the arrow keys
+  switch to it and fly (↑↓ along the view, ←→ sideways, Page Up/Down rise and fall, Shift faster), drag looks
+  around, Esc or the on-screen chip returns to orbit. The switch starts from the orbit camera's exact view.
 - **Timeline:** a scrubber along the bottom; drag back to any earlier iteration and the views show that state
   (history is recorded, §6.5). Branch: change a parameter at iteration 300 and continue from there as a new run.
 - **Live tweaking:** change learning rate, temperature, population size, etc. while running; the change is
