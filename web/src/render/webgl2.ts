@@ -1,10 +1,11 @@
 /** WebGL2 back-end: the same scene through GLSL ES 3.00, for browsers without WebGPU. Same uniform layout
- *  (std140 blocks), same instanced trail and sprites. */
+ *  (std140 blocks), same draw list; point buffers are bound at each draw's offset via vertexAttribPointer. */
 
-import { LAYER_CAP, type Backend, type Layer } from "./backend";
+import { BUFFER_CAP, type Backend, type BufferId, type DrawItem } from "./backend";
 import { DRAW_FLOATS, SCENE_FLOATS, glslPoints, glslSurface, glslTrail } from "./shaders";
+import { gridIndices } from "./webgpu";
 
-const LAYERS: Layer[] = ["trail", "points", "marker", "minima"];
+const BUFFERS: BufferId[] = ["data", "marks", "stress"];
 
 export function createWebGL2(canvas: OffscreenCanvas | HTMLCanvasElement): Backend | null {
   const gl = canvas.getContext("webgl2", {
@@ -22,13 +23,11 @@ export function createWebGL2(canvas: OffscreenCanvas | HTMLCanvasElement): Backe
 class WebGL2Backend implements Backend {
   readonly kind = "webgl2";
   private sceneUbo: WebGLBuffer;
-  private drawUbos = {} as Record<Layer, WebGLBuffer>;
-  private dataBufs = {} as Record<Layer, WebGLBuffer>;
-  private counts: Record<Layer, number> = { trail: 0, points: 0, marker: 0, minima: 0 };
+  private drawUbo: WebGLBuffer;
+  private data = {} as Record<BufferId, WebGLBuffer>;
   private progs: { surface?: WebGLProgram; trail?: WebGLProgram; points?: WebGLProgram } = {};
   private surfaceVao: WebGLVertexArrayObject;
-  private trailVao: WebGLVertexArrayObject;
-  private pointVaos = {} as Record<Layer, WebGLVertexArrayObject>;
+  private vao: WebGLVertexArrayObject;
   private indexBuf: WebGLBuffer;
   private indexCount = 0;
 
@@ -38,34 +37,22 @@ class WebGL2Backend implements Backend {
     readonly adapter: string,
   ) {
     this.sceneUbo = this.ubo(SCENE_FLOATS);
-    for (const l of LAYERS) {
-      this.drawUbos[l] = this.ubo(DRAW_FLOATS);
-      const b = gl.createBuffer()!;
-      gl.bindBuffer(gl.ARRAY_BUFFER, b);
-      gl.bufferData(gl.ARRAY_BUFFER, LAYER_CAP[l] * 8 + 8, gl.DYNAMIC_DRAW);
-      this.dataBufs[l] = b;
+    this.drawUbo = this.ubo(DRAW_FLOATS);
+    for (const b of BUFFERS) {
+      const buf = gl.createBuffer()!;
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      gl.bufferData(gl.ARRAY_BUFFER, BUFFER_CAP[b] * 8 + 16, gl.DYNAMIC_DRAW);
+      this.data[b] = buf;
     }
     this.indexBuf = gl.createBuffer()!;
     this.surfaceVao = gl.createVertexArray()!;
     gl.bindVertexArray(this.surfaceVao);
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.indexBuf);
-
-    this.trailVao = gl.createVertexArray()!;
-    gl.bindVertexArray(this.trailVao);
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.dataBufs.trail);
-    for (const [loc, off] of [[0, 0], [1, 8]]) {
+    this.vao = gl.createVertexArray()!;
+    gl.bindVertexArray(this.vao);
+    for (const loc of [0, 1]) {
       gl.enableVertexAttribArray(loc);
-      gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 8, off);
       gl.vertexAttribDivisor(loc, 1);
-    }
-    for (const l of ["points", "marker", "minima"] as const) {
-      const vao = gl.createVertexArray()!;
-      gl.bindVertexArray(vao);
-      gl.bindBuffer(gl.ARRAY_BUFFER, this.dataBufs[l]);
-      gl.enableVertexAttribArray(0);
-      gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 8, 0);
-      gl.vertexAttribDivisor(0, 1);
-      this.pointVaos[l] = vao;
     }
     gl.bindVertexArray(null);
     gl.enable(gl.DEPTH_TEST);
@@ -109,14 +96,7 @@ class WebGL2Backend implements Backend {
       trail: this.program(glslTrail(expr)),
       points: this.program(glslPoints(expr)),
     };
-    const idx = new Uint32Array((n - 1) * (n - 1) * 6);
-    let k = 0;
-    for (let j = 0; j < n - 1; j++)
-      for (let i = 0; i < n - 1; i++) {
-        const a = j * n + i, b = a + 1, c = a + n, e = c + 1;
-        idx.set([a, b, e, a, e, c], k);
-        k += 6;
-      }
+    const idx = gridIndices(n);
     gl.bindVertexArray(this.surfaceVao);
     gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, idx, gl.STATIC_DRAW);
     gl.bindVertexArray(null);
@@ -129,52 +109,44 @@ class WebGL2Backend implements Backend {
     this.gl.viewport(0, 0, w, h);
   }
 
-  upload(layer: Layer, data: Float32Array, count: number) {
-    const n = Math.min(count, LAYER_CAP[layer]);
-    this.counts[layer] = n;
+  upload(buffer: BufferId, data: Float32Array, count: number) {
+    const n = Math.min(count, BUFFER_CAP[buffer]);
     if (!n) return;
     const gl = this.gl;
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.dataBufs[layer]);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.data[buffer]);
     gl.bufferSubData(gl.ARRAY_BUFFER, 0, data, 0, n * 2);
   }
 
-  draw(scene: Float32Array, draws: Record<Layer, Float32Array>, bg: [number, number, number]) {
+  draw(scene: Float32Array, items: DrawItem[], bg: [number, number, number]) {
     const gl = this.gl;
     const { surface, trail, points } = this.progs;
     if (!surface || !trail || !points) return;
     gl.bindBuffer(gl.UNIFORM_BUFFER, this.sceneUbo);
     gl.bufferSubData(gl.UNIFORM_BUFFER, 0, scene, 0, SCENE_FLOATS);
     gl.bindBufferBase(gl.UNIFORM_BUFFER, 0, this.sceneUbo);
+    gl.bindBufferBase(gl.UNIFORM_BUFFER, 1, this.drawUbo);
     gl.clearColor(bg[0], bg[1], bg[2], 1);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-
-    const useDraw = (l: Layer) => {
-      gl.bindBuffer(gl.UNIFORM_BUFFER, this.drawUbos[l]);
-      gl.bufferSubData(gl.UNIFORM_BUFFER, 0, draws[l], 0, DRAW_FLOATS);
-      gl.bindBufferBase(gl.UNIFORM_BUFFER, 1, this.drawUbos[l]);
-    };
 
     gl.disable(gl.BLEND);
     gl.depthMask(true);
     gl.useProgram(surface);
-    useDraw("trail");
     gl.bindVertexArray(this.surfaceVao);
     gl.drawElements(gl.TRIANGLES, this.indexCount, gl.UNSIGNED_INT, 0);
 
     gl.enable(gl.BLEND);
     gl.depthMask(false);
-    if (this.counts.trail > 1) {
-      gl.useProgram(trail);
-      useDraw("trail");
-      gl.bindVertexArray(this.trailVao);
-      gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, this.counts.trail - 1);
-    }
-    gl.useProgram(points);
-    for (const l of ["points", "minima", "marker"] as const) {
-      if (!this.counts[l]) continue;
-      useDraw(l);
-      gl.bindVertexArray(this.pointVaos[l]);
-      gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, this.counts[l]);
+    gl.bindVertexArray(this.vao);
+    for (const it of items) {
+      const isTrail = it.kind === "trail";
+      if (it.count < (isTrail ? 2 : 1)) continue;
+      gl.useProgram(isTrail ? trail : points);
+      gl.bindBuffer(gl.UNIFORM_BUFFER, this.drawUbo);
+      gl.bufferSubData(gl.UNIFORM_BUFFER, 0, it.uniforms, 0, DRAW_FLOATS);
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.data[it.buffer]);
+      gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 8, it.first * 8);
+      gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 8, it.first * 8 + (isTrail ? 8 : 0));
+      gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, isTrail ? it.count - 1 : it.count);
     }
     gl.bindVertexArray(null);
     gl.depthMask(true);

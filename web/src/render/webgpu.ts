@@ -1,11 +1,12 @@
-/** WebGPU back-end: 4× MSAA, one uniform buffer for the scene and one per layer, instanced trail segments and
- *  point sprites. Pipelines are rebuilt when the problem changes (they embed f). */
+/** WebGPU back-end: 4× MSAA, the surface plus a list of instanced trail and point-sprite draws. Each draw has its
+ *  own small uniform buffer (a fixed pool); point buffers are bound at the draw's offset, so instance indices
+ *  start at 0 for every item. Pipelines are rebuilt when the problem changes (they embed f). */
 
-import { LAYER_CAP, type Backend, type Layer } from "./backend";
+import { BUFFER_CAP, MAX_ITEMS, type Backend, type BufferId, type DrawItem } from "./backend";
 import { DRAW_FLOATS, SCENE_FLOATS, wgslPoints, wgslSurface, wgslTrail } from "./shaders";
 
-const LAYERS: Layer[] = ["trail", "points", "marker", "minima"];
 const SAMPLES = 4;
+const BUFFERS: BufferId[] = ["data", "marks", "stress"];
 
 export async function createWebGPU(canvas: OffscreenCanvas | HTMLCanvasElement, onError: (m: string) => void): Promise<Backend | null> {
   if (!("gpu" in navigator) || !navigator.gpu) return null;
@@ -25,11 +26,9 @@ class WebGPUBackend implements Backend {
   readonly kind = "webgpu";
   private format: GPUTextureFormat;
   private sceneBuf: GPUBuffer;
-  private drawBufs = {} as Record<Layer, GPUBuffer>;
-  private dataBufs = {} as Record<Layer, GPUBuffer>;
-  private counts: Record<Layer, number> = { trail: 0, points: 0, marker: 0, minima: 0 };
+  private slots: { buf: GPUBuffer; group: GPUBindGroup }[] = [];
+  private data = {} as Record<BufferId, GPUBuffer>;
   private bgl: GPUBindGroupLayout;
-  private groups = {} as Record<Layer | "surface", GPUBindGroup>;
   private surface?: GPURenderPipeline;
   private trail?: GPURenderPipeline;
   private points?: GPURenderPipeline;
@@ -54,22 +53,20 @@ class WebGPUBackend implements Backend {
         buffer: { type: "uniform" as const },
       })),
     });
-    for (const l of LAYERS) {
-      this.drawBufs[l] = device.createBuffer({ size: DRAW_FLOATS * 4, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-      this.dataBufs[l] = device.createBuffer({ size: LAYER_CAP[l] * 8 + 8, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
-      this.groups[l] = this.group(this.drawBufs[l]);
+    for (let i = 0; i < MAX_ITEMS + 1; i++) {
+      const buf = device.createBuffer({ size: DRAW_FLOATS * 4, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+      const group = device.createBindGroup({
+        layout: this.bgl,
+        entries: [
+          { binding: 0, resource: { buffer: this.sceneBuf } },
+          { binding: 1, resource: { buffer: buf } },
+        ],
+      });
+      this.slots.push({ buf, group });
     }
-    this.groups.surface = this.group(this.drawBufs.trail);
-  }
-
-  private group(draw: GPUBuffer) {
-    return this.device.createBindGroup({
-      layout: this.bgl,
-      entries: [
-        { binding: 0, resource: { buffer: this.sceneBuf } },
-        { binding: 1, resource: { buffer: draw } },
-      ],
-    });
+    for (const b of BUFFERS) {
+      this.data[b] = device.createBuffer({ size: BUFFER_CAP[b] * 8 + 16, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
+    }
   }
 
   setProblem(expr: string, n: number) {
@@ -82,7 +79,6 @@ class WebGPUBackend implements Backend {
       alpha: { srcFactor: "one", dstFactor: "one-minus-src-alpha" },
     };
     const mod = (code: string) => d.createShaderModule({ code });
-
     const sm = mod(wgslSurface(expr, n));
     this.surface = d.createRenderPipeline({
       layout,
@@ -115,16 +111,7 @@ class WebGPUBackend implements Backend {
       depthStencil: { ...depthStencil, depthWriteEnabled: false },
       multisample,
     });
-
-    // grid indices: two triangles per cell
-    const idx = new Uint32Array((n - 1) * (n - 1) * 6);
-    let k = 0;
-    for (let j = 0; j < n - 1; j++)
-      for (let i = 0; i < n - 1; i++) {
-        const a = j * n + i, b = a + 1, c = a + n, e = c + 1;
-        idx.set([a, b, e, a, e, c], k);
-        k += 6;
-      }
+    const idx = gridIndices(n);
     this.index?.destroy();
     this.index = d.createBuffer({ size: idx.byteLength, usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST });
     d.queue.writeBuffer(this.index, 0, idx);
@@ -141,17 +128,17 @@ class WebGPUBackend implements Backend {
     this.depth = this.device.createTexture({ size, sampleCount: SAMPLES, format: "depth24plus", usage: GPUTextureUsage.RENDER_ATTACHMENT });
   }
 
-  upload(layer: Layer, data: Float32Array, count: number) {
-    const n = Math.min(count, LAYER_CAP[layer]);
-    this.counts[layer] = n;
-    if (n > 0) this.device.queue.writeBuffer(this.dataBufs[layer], 0, data.buffer, data.byteOffset, n * 8);
+  upload(buffer: BufferId, data: Float32Array, count: number) {
+    const n = Math.min(count, BUFFER_CAP[buffer]);
+    if (n > 0) this.device.queue.writeBuffer(this.data[buffer], 0, data.buffer, data.byteOffset, n * 8);
   }
 
-  draw(scene: Float32Array, draws: Record<Layer, Float32Array>, bg: [number, number, number]) {
+  draw(scene: Float32Array, items: DrawItem[], bg: [number, number, number]) {
     if (!this.surface || !this.trail || !this.points || !this.index || !this.msaa || !this.depth) return;
     const q = this.device.queue;
     q.writeBuffer(this.sceneBuf, 0, scene.buffer, scene.byteOffset, SCENE_FLOATS * 4);
-    for (const l of LAYERS) q.writeBuffer(this.drawBufs[l], 0, draws[l].buffer, draws[l].byteOffset, DRAW_FLOATS * 4);
+    const n = Math.min(items.length, MAX_ITEMS);
+    for (let i = 0; i < n; i++) q.writeBuffer(this.slots[i + 1].buf, 0, items[i].uniforms.buffer, items[i].uniforms.byteOffset, DRAW_FLOATS * 4);
 
     const enc = this.device.createCommandEncoder();
     const pass = enc.beginRenderPass({
@@ -165,25 +152,41 @@ class WebGPUBackend implements Backend {
       depthStencilAttachment: { view: this.depth.createView(), depthClearValue: 1, depthLoadOp: "clear", depthStoreOp: "discard" },
     });
     pass.setPipeline(this.surface);
-    pass.setBindGroup(0, this.groups.surface);
+    pass.setBindGroup(0, this.slots[0].group);
     pass.setIndexBuffer(this.index, "uint32");
     pass.drawIndexed(this.indexCount);
-
-    if (this.counts.trail > 1) {
-      pass.setPipeline(this.trail);
-      pass.setBindGroup(0, this.groups.trail);
-      pass.setVertexBuffer(0, this.dataBufs.trail, 0);
-      pass.setVertexBuffer(1, this.dataBufs.trail, 8);
-      pass.draw(6, this.counts.trail - 1);
-    }
-    pass.setPipeline(this.points);
-    for (const l of ["points", "minima", "marker"] as const) {
-      if (!this.counts[l]) continue;
-      pass.setBindGroup(0, this.groups[l]);
-      pass.setVertexBuffer(0, this.dataBufs[l], 0);
-      pass.draw(6, this.counts[l]);
+    for (let i = 0; i < n; i++) {
+      const it = items[i];
+      const buf = this.data[it.buffer];
+      if (it.kind === "trail") {
+        if (it.count < 2) continue;
+        pass.setPipeline(this.trail);
+        pass.setBindGroup(0, this.slots[i + 1].group);
+        pass.setVertexBuffer(0, buf, it.first * 8);
+        pass.setVertexBuffer(1, buf, it.first * 8 + 8);
+        pass.draw(6, it.count - 1);
+      } else {
+        if (it.count < 1) continue;
+        pass.setPipeline(this.points);
+        pass.setBindGroup(0, this.slots[i + 1].group);
+        pass.setVertexBuffer(0, buf, it.first * 8);
+        pass.draw(6, it.count);
+      }
     }
     pass.end();
     q.submit([enc.finish()]);
   }
+}
+
+/** Two triangles per grid cell. */
+export function gridIndices(n: number) {
+  const idx = new Uint32Array((n - 1) * (n - 1) * 6);
+  let k = 0;
+  for (let j = 0; j < n - 1; j++)
+    for (let i = 0; i < n - 1; i++) {
+      const a = j * n + i, b = a + 1, c = a + n, e = c + 1;
+      idx.set([a, b, e, a, e, c], k);
+      k += 6;
+    }
+  return idx;
 }

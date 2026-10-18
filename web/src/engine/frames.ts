@@ -1,54 +1,57 @@
 /**
  * Frames: how the engine worker hands state to the render worker without either waiting for the other.
  *
- * A frame is a small Float64 header (scalars) plus a Float32 data area (trail and points, in surface
- * coordinates u, v ∈ [-1, 1]). Two transports implement the same writer/reader interface:
+ * A frame is a Float64 header plus a Float32 data area:
+ * - header: H.* scalars, then from H.index the engine's frame index (crates/wasm `build_frame`: run count,
+ *   minima offset/count, then RUN_STRIDE values per run: trail offset/count, shape offset/count, marker u v,
+ *   start u v, health, halted)
+ * - data: the u, v pairs the index points into (trails, shapes, minima), then the stress-test points
  *
+ * Two transports implement the same writer/reader interface:
  * - TripleBuffer (preferred): three frame slots in one SharedArrayBuffer. The writer always has a slot of its
  *   own to fill, the reader always has one to read, and the third is the hand-off. Publishing and picking up
- *   are one Atomics.exchange each: lock-free, no copies beyond the writer filling its slot, and the reader
- *   always sees the newest complete frame. Needs a cross-origin isolated page.
+ *   are one Atomics.exchange each: lock-free, and the reader always sees the newest complete frame. Needs a
+ *   cross-origin isolated page.
  * - PostFrames (fallback): the same frames as transferable ArrayBuffers over a MessagePort, recycled through a
  *   small pool. Used when SharedArrayBuffer is unavailable.
  */
 
 export const H = {
   seq: 0,
-  iter: 1,
-  f: 2,
-  gradNorm: 3,
-  x: 4,
-  y: 5,
-  trailCount: 6,
-  diverged: 7,
-  pointsCount: 8,
   /** performance.now() when the writer published (both workers share the page's time origin) */
-  publishedAt: 9,
-  markerU: 10,
-  markerV: 11,
+  publishedAt: 1,
+  iter: 2,
+  head: 3,
+  pointsCount: 4,
+  indexLen: 5,
+  /** where the engine's frame index starts */
+  index: 16,
 } as const;
-const HEADER_F64 = 16;
+export const HEADER_F64 = 128;
+export const INDEX_HEAD = 8;
+export const RUN_STRIDE = 12;
+export const R = { trailOff: 0, trailN: 1, shapeOff: 2, shapeN: 3, mu: 4, mv: 5, su: 6, sv: 7, health: 8, halted: 9 } as const;
 
 export interface Layout {
-  trailCap: number; // points
-  pointsCap: number; // points
+  dataCap: number; // points in the data area (trails, shapes, minima)
+  pointsCap: number; // stress-test points
 }
 
 export function slotBytes(l: Layout) {
-  return HEADER_F64 * 8 + 4 * 2 * (l.trailCap + l.pointsCap);
+  return HEADER_F64 * 8 + 4 * 2 * (l.dataCap + l.pointsCap);
 }
 
 export interface Frame {
   header: Float64Array;
-  trail: Float32Array; // 2 * trailCap
+  data: Float32Array; // 2 * dataCap
   points: Float32Array; // 2 * pointsCap
 }
 
 function frameOn(buf: ArrayBufferLike, offset: number, l: Layout): Frame {
   return {
     header: new Float64Array(buf, offset, HEADER_F64),
-    trail: new Float32Array(buf, offset + HEADER_F64 * 8, 2 * l.trailCap),
-    points: new Float32Array(buf, offset + HEADER_F64 * 8 + 8 * l.trailCap, 2 * l.pointsCap),
+    data: new Float32Array(buf, offset + HEADER_F64 * 8, 2 * l.dataCap),
+    points: new Float32Array(buf, offset + HEADER_F64 * 8 + 8 * l.dataCap, 2 * l.pointsCap),
   };
 }
 

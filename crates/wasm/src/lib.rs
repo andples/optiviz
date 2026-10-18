@@ -17,6 +17,9 @@ pub use wasm_bindgen_rayon::init_thread_pool;
 
 pub const RUN_STRIDE: usize = 12;
 pub const INDEX_HEAD: usize = 8;
+/// Longest drawn trail segment, in surface units (the view box is 2 wide), and extra points allowed per run.
+const DRAPE_STEP: f32 = 0.012;
+const DRAPE_BUDGET: usize = 6000;
 
 #[wasm_bindgen(start)]
 pub fn start() {
@@ -242,8 +245,24 @@ impl Engine {
         let mut runs_idx = vec![];
         for r in &s.runs {
             let t0 = self.frame.len() / 2;
+            // long segments are subdivided so they drape over the surface instead of cutting through it
+            // (straight in x, y; each piece is lifted to the surface by the shader); a budget per run caps it
+            let mut budget = DRAPE_BUDGET;
+            let mut prev: Option<[f32; 2]> = None;
             for p in r.trail().chunks(2) {
-                self.frame.extend(uv(p[0], p[1]));
+                let q = uv(p[0], p[1]);
+                if let Some(a) = prev {
+                    let d = ((q[0] - a[0]).powi(2) + (q[1] - a[1]).powi(2)).sqrt();
+                    let inside = a.iter().chain(&q).all(|v| v.abs() <= 1.0);
+                    let n = if inside { ((d / DRAPE_STEP).ceil() as usize).clamp(1, 64).min(budget + 1) } else { 1 };
+                    budget -= n - 1;
+                    for k in 1..n {
+                        let t = k as f32 / n as f32;
+                        self.frame.extend([a[0] + t * (q[0] - a[0]), a[1] + t * (q[1] - a[1])]);
+                    }
+                }
+                self.frame.extend(q);
+                prev = Some(q);
             }
             let tn = self.frame.len() / 2 - t0;
             let s0 = self.frame.len() / 2;

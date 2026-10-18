@@ -160,3 +160,91 @@ export class OrbitCamera {
     return mul(proj, lookAt(this.eye(), TARGET, [0, 1, 0]));
   }
 }
+
+/** General 4×4 inverse (column-major); null if singular. */
+export function invert(m: Mat4): Mat4 | null {
+  const a = m;
+  const o = new Float32Array(16);
+  const b00 = a[0] * a[5] - a[1] * a[4], b01 = a[0] * a[6] - a[2] * a[4], b02 = a[0] * a[7] - a[3] * a[4];
+  const b03 = a[1] * a[6] - a[2] * a[5], b04 = a[1] * a[7] - a[3] * a[5], b05 = a[2] * a[7] - a[3] * a[6];
+  const b06 = a[8] * a[13] - a[9] * a[12], b07 = a[8] * a[14] - a[10] * a[12], b08 = a[8] * a[15] - a[11] * a[12];
+  const b09 = a[9] * a[14] - a[10] * a[13], b10 = a[9] * a[15] - a[11] * a[13], b11 = a[10] * a[15] - a[11] * a[14];
+  const det = b00 * b11 - b01 * b10 + b02 * b09 + b03 * b08 - b04 * b07 + b05 * b06;
+  if (!det) return null;
+  const d = 1 / det;
+  o[0] = (a[5] * b11 - a[6] * b10 + a[7] * b09) * d;
+  o[1] = (a[2] * b10 - a[1] * b11 - a[3] * b09) * d;
+  o[2] = (a[13] * b05 - a[14] * b04 + a[15] * b03) * d;
+  o[3] = (a[10] * b04 - a[9] * b05 - a[11] * b03) * d;
+  o[4] = (a[6] * b08 - a[4] * b11 - a[7] * b07) * d;
+  o[5] = (a[0] * b11 - a[2] * b08 + a[3] * b07) * d;
+  o[6] = (a[14] * b02 - a[12] * b05 - a[15] * b01) * d;
+  o[7] = (a[8] * b05 - a[10] * b02 + a[11] * b01) * d;
+  o[8] = (a[4] * b10 - a[5] * b08 + a[7] * b06) * d;
+  o[9] = (a[1] * b08 - a[0] * b10 - a[3] * b06) * d;
+  o[10] = (a[12] * b04 - a[13] * b02 + a[15] * b00) * d;
+  o[11] = (a[9] * b02 - a[8] * b04 - a[11] * b00) * d;
+  o[12] = (a[5] * b07 - a[4] * b09 - a[6] * b06) * d;
+  o[13] = (a[0] * b09 - a[1] * b07 + a[2] * b06) * d;
+  o[14] = (a[13] * b01 - a[12] * b03 - a[14] * b00) * d;
+  o[15] = (a[8] * b03 - a[9] * b01 + a[10] * b00) * d;
+  return o;
+}
+
+/** The world-space ray through a point in normalized device coordinates (depth 0..1, WebGPU convention). */
+export function rayThrough(viewProj: Mat4, nx: number, ny: number): { o: number[]; d: number[] } | null {
+  const inv = invert(viewProj);
+  if (!inv) return null;
+  const un = (z: number) => {
+    const v = [nx, ny, z, 1];
+    const r = [0, 1, 2, 3].map((i) => inv[i] * v[0] + inv[4 + i] * v[1] + inv[8 + i] * v[2] + inv[12 + i] * v[3]);
+    return [r[0] / r[3], r[1] / r[3], r[2] / r[3]];
+  };
+  const a = un(0), b = un(1);
+  return { o: a, d: norm(sub(b, a)) };
+}
+
+/**
+ * The contour view's camera: straight down on the surface (screen up = problem y), orthographic, with pan and
+ * zoom. Surface coordinates u, v ∈ [-1, 1] fill the shorter side at zoom 1.
+ */
+export class ContourCamera {
+  cx = 0;
+  cv = 0;
+  half = 1.08;
+
+  /** Drag in CSS pixels; `h` is the canvas height in CSS pixels. */
+  pan(dx: number, dy: number, h: number) {
+    const s = (2 * this.half) / h;
+    this.cx -= dx * s;
+    this.cv += dy * s;
+  }
+  zoom(factor: number) {
+    this.half = Math.min(4, Math.max(0.05, this.half * factor));
+  }
+  reset() {
+    this.cx = this.cv = 0;
+    this.half = 1.08;
+  }
+  /** world: x = u, z = −v; looking down −y */
+  viewProj(aspect: number): Mat4 {
+    const hh = this.half, hw = this.half * aspect;
+    const m = new Float32Array(16);
+    // x_ndc = (u − cx)/hw; y_ndc = (v − cv)/hh = (−z − cv)/hh; depth from height (top of the box → 0)
+    m[0] = 1 / hw;
+    m[12] = -this.cx / hw;
+    m[9] = -1 / hh;
+    m[13] = -this.cv / hh;
+    m[6] = -0.1;
+    m[14] = 0.5;
+    m[15] = 1;
+    return m;
+  }
+  eye(): number[] {
+    return [this.cx, 10, -this.cv];
+  }
+  /** Surface coordinates under a point in NDC. */
+  uvAt(nx: number, ny: number, aspect: number): [number, number] {
+    return [this.cx + nx * this.half * aspect, this.cv + ny * this.half];
+  }
+}

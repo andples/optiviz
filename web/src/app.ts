@@ -29,7 +29,7 @@ export function detectCaps(): Caps {
   };
 }
 
-export const LAYOUT: Layout = { trailCap: 8200, pointsCap: 1 << 20 };
+export const LAYOUT: Layout = { dataCap: 131_072, pointsCap: 1 << 20 };
 
 export interface Tier {
   render: "worker" | "main";

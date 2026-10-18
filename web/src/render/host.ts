@@ -1,37 +1,47 @@
 /**
  * The render host: owns the canvas and a GPU back-end, reads the newest engine frame each display frame and
- * draws it. Runs in the render worker (with an OffscreenCanvas) or, as a fallback, on the main thread; the
- * code is the same, only the message plumbing differs.
+ * draws it: the surface (3D, or flat from above in the contour view), each run's trail with a halo so it reads
+ * on any colour, Nelder–Mead's simplex, markers, the start and the known minima. Runs in the render worker
+ * (with an OffscreenCanvas) or, as a fallback, on the main thread; the code is the same.
+ *
+ * Health (DESIGN.md §4.3) shows on the marker: out of view → a hollow ring pinned to the box edge; diverging or
+ * unbounded → an extra pulsing ring; diverged → a hollow ring at the last finite point.
  */
 
-import { H, readerFor, type FrameReader } from "../engine/frames";
-import type { ProblemManifest, RenderCmd, RenderMsg, Theme } from "../engine/protocol";
-import type { Backend, Layer } from "./backend";
-import { OrbitCamera } from "./camera";
+import { H, INDEX_HEAD, R, RUN_STRIDE, readerFor, type FrameReader } from "../engine/frames";
+import type { ProblemInfo, RenderCmd, RenderMsg, Theme, ViewMode } from "../engine/protocol";
+import type { Backend, DrawItem } from "./backend";
+import { ContourCamera, OrbitCamera, rayThrough } from "./camera";
 import { DRAW_FLOATS, SCENE_FLOATS } from "./shaders";
 import { createWebGL2 } from "./webgl2";
 import { createWebGPU } from "./webgpu";
+import { RUN_COLORS } from "../ui/colors";
 
 const MESH_N = 384;
-
-/** Run colours (first is the single-run colour); the trail is drawn in it, the marker filled with it. */
-const RUN_COLOR: [number, number, number] = [0.85, 0.24, 0.1];
+const HEIGHT_SCALE = 0.62;
 
 export class RenderHost {
   private backend?: Backend;
   private reader?: FrameReader;
-  private camera = new OrbitCamera();
-  private manifest?: ProblemManifest;
-  private zrange: [number, number] = [0, 1];
+  private orbit = new OrbitCamera();
+  private contour = new ContourCamera();
+  private mode: ViewMode = "surface";
+  private info?: ProblemInfo;
   private theme: Theme = { bg: [0.98, 0.976, 0.965], dark: false };
   private w = 1;
   private h = 1;
   private dpr = 1;
   private scene = new Float32Array(SCENE_FLOATS);
-  private draws = {} as Record<Layer, Float32Array>;
+  private items: DrawItem[] = [];
+  private uniforms: Float32Array[] = [];
+  private marks = new Float32Array(64);
   private lastFrameAt = performance.now();
   private dirty = true;
-  private trailCount = 0;
+  private selected = 0;
+  private time = 0;
+  /** the latest frame's index, kept for redraws without a new frame */
+  private index = new Float64Array(128);
+  private points = 0;
   // stats
   private frames = 0;
   private cpuMs = 0;
@@ -42,9 +52,7 @@ export class RenderHost {
   constructor(
     private send: (m: RenderMsg) => void,
     private thread: "worker" | "main",
-  ) {
-    for (const l of ["trail", "points", "marker", "minima"] as Layer[]) this.draws[l] = new Float32Array(DRAW_FLOATS);
-  }
+  ) {}
 
   async handle(cmd: RenderCmd) {
     switch (cmd.type) {
@@ -55,12 +63,23 @@ export class RenderHost {
         this.theme = cmd.theme;
         let be: Backend | null = null;
         const errors: string[] = [];
-        if (cmd.prefer !== "webgl2") be = await createWebGPU(cmd.canvas, (message) => this.send({ type: "error", message })).catch((e) => (errors.push(String(e)), null));
-        if (!be) be = (() => { try { return createWebGL2(cmd.canvas); } catch (e) { errors.push(String(e)); return null; } })();
+        if (cmd.prefer !== "webgl2") {
+          be = await createWebGPU(cmd.canvas, (message) => this.send({ type: "error", message })).catch((e) => {
+            errors.push(String(e));
+            return null;
+          });
+        }
+        if (!be) {
+          try {
+            be = createWebGL2(cmd.canvas);
+          } catch (e) {
+            errors.push(String(e));
+          }
+        }
         if (!be) return this.send({ type: "failed", reason: errors.join("; ") || "no WebGPU or WebGL2" });
         this.backend = be;
         be.resize(Math.round(this.w * this.dpr), Math.round(this.h * this.dpr));
-        if (this.manifest) this.applyProblem();
+        if (this.info) this.applyProblem();
         this.send({ type: "ready", backend: be.kind, adapter: be.adapter });
         this.loop();
         break;
@@ -68,11 +87,16 @@ export class RenderHost {
       case "transport":
         this.reader = readerFor(cmd.transport);
         break;
-      case "problem":
-        this.manifest = cmd.manifest;
-        this.zrange = cmd.zrange;
-        if (this.backend) this.applyProblem();
+      case "problem": {
+        const old = this.info?.manifest;
+        const exprChanged = !old || old.shader_expr !== cmd.info.manifest.shader_expr;
+        this.info = cmd.info;
+        if (this.backend) {
+          if (exprChanged) this.applyProblem();
+          else this.dirty = true;
+        }
         break;
+      }
       case "resize":
         this.w = cmd.width;
         this.h = cmd.height;
@@ -81,27 +105,50 @@ export class RenderHost {
         this.dirty = true;
         break;
       case "orbit":
-        this.camera.orbit(cmd.dx, cmd.dy);
+        if (this.mode === "contour") this.contour.pan(cmd.dx, cmd.dy, this.h);
+        else this.orbit.orbit(cmd.dx, cmd.dy);
+        this.dirty = true;
         break;
       case "zoom":
-        this.camera.zoom(cmd.factor);
+        if (this.mode === "contour") this.contour.zoom(cmd.factor);
+        else this.orbit.zoom(cmd.factor);
+        this.dirty = true;
         break;
       case "camera":
-        this.camera.setMode(cmd.mode);
+        this.orbit.setMode(cmd.mode);
         this.dirty = true;
         break;
       case "keys":
-        this.camera.setKeys(cmd.keys);
+        this.orbit.setKeys(cmd.keys);
+        break;
+      case "view":
+        this.mode = cmd.mode;
+        this.dirty = true;
+        break;
+      case "select":
+        this.selected = cmd.i;
+        this.dirty = true;
         break;
       case "theme":
         this.theme = cmd.theme;
         this.dirty = true;
         break;
+      case "pick": {
+        const aspect = this.w / this.h;
+        const nx = (2 * cmd.x) / this.w - 1;
+        const ny = 1 - (2 * cmd.y) / this.h;
+        if (this.mode === "contour") this.send({ type: "picked", uv: this.contour.uvAt(nx, ny, aspect) });
+        else {
+          const ray = rayThrough(this.orbit.viewProj(aspect), nx, ny);
+          if (ray) this.send({ type: "picked", ray: { ...ray, hs: HEIGHT_SCALE } });
+        }
+        break;
+      }
     }
   }
 
   private applyProblem() {
-    const m = this.manifest!;
+    const m = this.info!.manifest;
     if (!m.shader_expr) return;
     try {
       this.backend!.setProblem(m.shader_expr, MESH_N);
@@ -109,9 +156,6 @@ export class RenderHost {
       this.send({ type: "error", message: String(e) });
       return;
     }
-    const [[x0, x1], [y0, y1]] = m.bounds;
-    const minima = new Float32Array(m.minima.flatMap(([x, y]) => [((x - x0) / (x1 - x0)) * 2 - 1, ((y - y0) / (y1 - y0)) * 2 - 1]));
-    this.backend!.upload("minima", minima, m.minima.length);
     this.dirty = true;
   }
 
@@ -128,45 +172,136 @@ export class RenderHost {
 
   private frame(now: number) {
     const be = this.backend;
-    if (!be || !this.manifest) return;
+    if (!be || !this.info) return;
     const dt = Math.min(0.1, (now - this.lastFrameAt) / 1000);
     this.lastFrameAt = now;
-    let changed = this.camera.update(dt) || this.dirty;
+    this.time += dt;
+    let changed = (this.mode === "surface" && this.orbit.update(dt)) || this.dirty;
 
     const got = this.reader?.latest();
     if (got?.fresh) {
       const h = got.frame.header;
-      this.trailCount = h[H.trailCount];
-      be.upload("trail", got.frame.trail, this.trailCount);
-      be.upload("points", got.frame.points, h[H.pointsCount]);
-      be.upload("marker", new Float32Array([h[H.markerU], h[H.markerV]]), h[H.iter] >= 0 ? 1 : 0);
+      const il = h[H.indexLen];
+      this.index.fill(0);
+      this.index.set(h.subarray(H.index, H.index + il));
+      be.upload("data", got.frame.data, this.dataPoints());
+      this.points = h[H.pointsCount];
+      be.upload("stress", got.frame.points, this.points);
       this.latency += now - h[H.publishedAt];
       this.latencyN++;
       changed = true;
     }
+    // a warning ring pulses while a run is diverging: keep drawing
+    if (this.anyWarning()) changed = true;
     if (!changed) return; // nothing moved: skip the draw entirely
     this.dirty = false;
+    this.buildItems();
+    be.upload("marks", this.marks, this.marks.length / 2);
     this.fillScene(now);
-    be.draw(this.scene, this.draws, this.theme.bg);
+    be.draw(this.scene, this.items, this.theme.bg);
+  }
+
+  /** Points used in the data area: the end of the last trail, shape or minima. */
+  private dataPoints() {
+    let n = this.index[1] + this.index[2];
+    for (let i = 0; i < this.index[0]; i++) {
+      const r = INDEX_HEAD + RUN_STRIDE * i;
+      n = Math.max(n, this.index[r + R.trailOff] + this.index[r + R.trailN], this.index[r + R.shapeOff] + this.index[r + R.shapeN]);
+    }
+    return n;
+  }
+
+  private anyWarning() {
+    for (let i = 0; i < this.index[0]; i++) {
+      const hc = this.index[INDEX_HEAD + RUN_STRIDE * i + R.health];
+      if (hc === 2 || hc === 3) return true;
+    }
+    return false;
+  }
+
+  private item(kind: DrawItem["kind"], buffer: DrawItem["buffer"], first: number, count: number, u: number[]) {
+    const k = this.items.length;
+    if (!this.uniforms[k]) this.uniforms[k] = new Float32Array(DRAW_FLOATS);
+    this.uniforms[k].set(u);
+    this.items.push({ kind, buffer, first, count, uniforms: this.uniforms[k] });
+  }
+
+  private buildItems() {
+    this.items.length = 0;
+    const ix = this.index;
+    const runs = ix[0];
+    const dark = this.theme.dark;
+    const halo = dark ? [0.08, 0.09, 0.1] : [1, 1, 1];
+    const ink = dark ? [0.92, 0.92, 0.9] : [0.12, 0.12, 0.14];
+    const order = [...Array(runs).keys()].filter((i) => i !== this.selected);
+    if (this.selected < runs) order.push(this.selected); // selected run on top
+    // marks: one marker per run, then the start
+    const markAt: number[] = [];
+    let m = 0;
+    for (let i = 0; i < runs; i++) {
+      const r = INDEX_HEAD + RUN_STRIDE * i;
+      let u = ix[r + R.mu], v = ix[r + R.mv];
+      if (!Number.isFinite(u) || !Number.isFinite(v)) u = v = 0; // diverged: drawn from the trail instead
+      const s = Math.max(1, Math.abs(u), Math.abs(v)); // pinned to the box edge when outside
+      this.marks[2 * m] = u / s;
+      this.marks[2 * m + 1] = v / s;
+      markAt[i] = m++;
+    }
+    const startAt = m;
+    if (runs > 0) {
+      this.marks[2 * m] = ix[INDEX_HEAD + R.su];
+      this.marks[2 * m + 1] = ix[INDEX_HEAD + R.sv];
+    }
+
+    for (const i of order) {
+      const r = INDEX_HEAD + RUN_STRIDE * i;
+      const c = RUN_COLORS[i % RUN_COLORS.length].rgb;
+      const sel = i === this.selected;
+      const t0 = ix[r + R.trailOff], tn = ix[r + R.trailN];
+      const width = sel ? 3.2 : 2.4;
+      this.item("trail", "data", t0, tn, [...halo, 0.6, width + 2.5, 0.006, 1, tn]);
+      this.item("trail", "data", t0, tn, [...c, 1, width, 0.007, 0, tn]);
+      const s0 = ix[r + R.shapeOff], sn = ix[r + R.shapeN];
+      if (sn > 1) {
+        this.item("trail", "data", s0, sn, [...halo, 0.8, 4.5, 0.008, 1, sn]);
+        this.item("trail", "data", s0, sn, [...c, 0.9, 1.6, 0.009, 1, sn]);
+      }
+      const hc = ix[r + R.health];
+      const halted = ix[r + R.halted] > 0;
+      const size = sel ? 7.5 : 6.5;
+      if (halted || !Number.isFinite(ix[r + R.mu])) {
+        if (tn > 0) this.item("points", "data", t0 + tn - 1, 1, [...c, 1, size + 2, 0.014, 2, 1]);
+      } else if (hc === 1) {
+        this.item("points", "marks", markAt[i], 1, [...c, 1, size + 2, 0.014, 2, 1]);
+      } else {
+        if (hc === 2 || hc === 3) {
+          const pulse = 0.5 + 0.5 * Math.sin(this.time * 6);
+          this.item("points", "marks", markAt[i], 1, [...c, 0.35 + 0.4 * pulse, size + 6 + 3 * pulse, 0.013, 2, 1]);
+        }
+        this.item("points", "marks", markAt[i], 1, [...c, 1, size, 0.014, 1, 1]);
+      }
+    }
+    // known minima, the start, the stress swarm
+    this.item("points", "data", ix[1], ix[2], [...ink, 0.7, 6, 0.004, 2, 0]);
+    if (runs > 0) this.item("points", "marks", startAt, 1, [...ink, 0.9, 5, 0.012, 2, 0]);
+    if (this.points > 0) this.item("points", "stress", 0, this.points, [0.1, 0.1, 0.12, 0.55, 1.2, 0.004, 0, 0]);
   }
 
   private fillScene(now: number) {
     const s = this.scene;
-    const m = this.manifest!;
-    s.set(this.camera.viewProj(this.w / this.h), 0);
-    s.set([...this.camera.eye(), 1], 16);
-    s.set([m.bounds[0][0], m.bounds[0][1], m.bounds[1][0], m.bounds[1][1]], 20);
-    s.set([this.zrange[0], this.zrange[1], 0.62, m.log_height ? 1 : 0], 24);
-    s.set([-0.45, 0.85, 0.35, 0.42], 28); // key light from the upper left, ambient share
+    const info = this.info!;
+    const aspect = this.w / this.h;
+    const contour = this.mode === "contour";
+    const cam = contour ? this.contour : this.orbit;
+    s.set(cam.viewProj(aspect), 0);
+    s.set([...cam.eye(), 1], 16);
+    const [[x0, x1], [y0, y1]] = info.view;
+    s.set([x0, x1, y0, y1], 20);
+    s.set([info.zrange[0], info.zrange[1], contour ? 0 : HEIGHT_SCALE, info.manifest.log_height ? 1 : 0], 24);
+    s.set([-0.45, 0.85, 0.35, contour ? 0.85 : 0.42], 28); // key light from the upper left, ambient share
     s.set([this.w * this.dpr, this.h * this.dpr, this.dpr, now / 1000], 32);
     s.set([...this.theme.bg, this.theme.dark ? 1 : 0], 36);
-    s.set([24, this.theme.dark ? 0.35 : 0.28, 0.22, 0], 40); // contour levels, strength, fog
-    const c = RUN_COLOR;
-    const ink = this.theme.dark ? [0.92, 0.92, 0.9] : [0.12, 0.12, 0.14];
-    this.draws.trail.set([...c, 0.95, 2.5, 0.006, 0, this.trailCount]);
-    this.draws.marker.set([...c, 1, 7, 0.012, 1, 1]);
-    this.draws.minima.set([ink[0], ink[1], ink[2], 0.75, 6, 0.004, 2, 0]);
-    this.draws.points.set([0.1, 0.1, 0.12, 0.55, 1.2, 0.004, 0, 0]);
+    s.set([24, this.theme.dark ? 0.35 : contour ? 0.4 : 0.28, contour ? 0 : 0.22, 0], 40); // contour levels, strength, fog
   }
 
   private stats(now: number) {

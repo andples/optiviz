@@ -1,6 +1,19 @@
-/** The small interface both GPU back-ends implement; views are written once against it (DESIGN.md §7.4). */
+/** The small interface both GPU back-ends implement; views are written once against it (DESIGN.md §7.4).
+ *  The host uploads point buffers, then hands over a list of draws for the frame. */
 
-export type Layer = "trail" | "points" | "marker" | "minima";
+/** data: trails, shapes, minima (the engine's frame); marks: markers and start points; stress: test swarm */
+export type BufferId = "data" | "marks" | "stress";
+
+export interface DrawItem {
+  kind: "trail" | "points";
+  buffer: BufferId;
+  /** first point in the buffer */
+  first: number;
+  /** points (a trail of n points draws n − 1 segments) */
+  count: number;
+  /** the Draw uniforms (DRAW_FLOATS): color rgba; size px, lift, mode, count */
+  uniforms: Float32Array;
+}
 
 export interface Backend {
   readonly kind: "webgpu" | "webgl2";
@@ -8,10 +21,11 @@ export interface Backend {
   /** Rebuilds the shaders for a new f(x, y) and mesh resolution. */
   setProblem(expr: string, meshN: number): void;
   resize(width: number, height: number): void;
-  /** Uploads `count` points (u, v pairs) to a layer. */
-  upload(layer: Layer, data: Float32Array, count: number): void;
-  /** Draws the scene. `scene` has SCENE_FLOATS values; `draws` gives each layer's Draw uniforms (DRAW_FLOATS). */
-  draw(scene: Float32Array, draws: Record<Layer, Float32Array>, bg: [number, number, number]): void;
+  upload(buffer: BufferId, data: Float32Array, count: number): void;
+  /** Draws the surface, then the items in order. */
+  draw(scene: Float32Array, items: DrawItem[], bg: [number, number, number]): void;
 }
 
-export const LAYER_CAP: Record<Layer, number> = { trail: 8200, points: 1 << 20, marker: 4, minima: 16 };
+export const BUFFER_CAP: Record<BufferId, number> = { data: 131_072, marks: 64, stress: 1 << 20 };
+/** Most draw items per frame (uniform slots) */
+export const MAX_ITEMS = 96;
