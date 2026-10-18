@@ -1,0 +1,24 @@
+[package]
+name = "optiviz-wasm"
+version = "0.1.0"
+description = "WebAssembly bindings for the engine worker: runs, frames, benchmarks; optional rayon thread pool"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = []
+# Multi-threaded build: needs std rebuilt with atomics (see justfile `wasm-threads`) and a cross-origin
+# isolated page (SharedArrayBuffer).
+threads = ["optiviz-core/parallel", "dep:wasm-bindgen-rayon"]
+
+[dependencies]
+optiviz-core.workspace = true
+serde_json.workspace = true
+wasm-bindgen = "=0.2.129"
+wasm-bindgen-rayon = { version = "1.3", optional = true }
+console_error_panic_hook = "0.1.7"
