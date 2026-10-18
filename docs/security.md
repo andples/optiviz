@@ -6,7 +6,7 @@ loads.
 
 ## Audit, 2026-10-19 (before making the repository public)
 
-**Secrets and history.** All 21 commits scanned for credentials (GitHub/AWS/Google/Slack/OpenAI/Anthropic token
+**Secrets and history.** All 18 commits scanned for credentials (GitHub/AWS/Google/Slack/OpenAI/Anthropic token
 formats, private keys, password/secret/API-key assignments): none. Commits use a GitHub no-reply address. No
 hostnames, IP addresses, tunnel IDs or home-directory paths in any tracked file or diff. Tracked files are source,
 docs and lockfiles only (95 files, largest 52 KB).
