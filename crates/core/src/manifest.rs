@@ -16,11 +16,15 @@ pub struct ProblemManifest {
     pub minima: Vec<Vec<f64>>,
     /// f(x, y) as an expression valid in both WGSL and GLSL ES 3.0 (floats only, `PI` defined by the shader),
     /// for 2D problems. Kernel tests check it against `Problem::eval` (crates/gpu-test).
-    pub shader_expr: Option<&'static str>,
+    pub shader_expr: Option<String>,
     /// Draw log(1 + f) rather than f: for functions whose range would flatten the interesting part
     pub log_height: bool,
     /// A sensible default start
     pub start: Vec<f64>,
+    /// The global minimum value, when known (charts plot f − f* on a log scale)
+    pub f_min: Option<f64>,
+    /// One line on what makes this landscape interesting
+    pub blurb: &'static str,
 }
 
 /// A tunable parameter. The inspector is generated from these.
@@ -35,6 +39,40 @@ pub struct ParamSpec {
     pub max: f64,
     /// Slide on a log scale
     pub log: bool,
+    /// For a discrete choice: the option labels; the value is the index. Empty for continuous parameters.
+    pub choices: &'static [&'static str],
+}
+
+impl ParamSpec {
+    pub const fn real(
+        key: &'static str,
+        symbol: &'static str,
+        description: &'static str,
+        default: f64,
+        min: f64,
+        max: f64,
+        log: bool,
+    ) -> Self {
+        ParamSpec { key, symbol, description, default, min, max, log, choices: &[] }
+    }
+    pub const fn choice(
+        key: &'static str,
+        symbol: &'static str,
+        description: &'static str,
+        default: usize,
+        choices: &'static [&'static str],
+    ) -> Self {
+        ParamSpec {
+            key,
+            symbol,
+            description,
+            default: default as f64,
+            min: 0.0,
+            max: (choices.len() - 1) as f64,
+            log: false,
+            choices,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]

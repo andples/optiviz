@@ -4,15 +4,18 @@
 //! runs) and in the browser (WebAssembly). See DESIGN.md §6.2 for the plugin model.
 
 pub mod manifest;
+pub mod monitor;
 pub mod multistart;
 pub mod optimizers;
 pub mod problems;
 pub mod rng;
+pub mod trace;
 
 pub use manifest::{Deviation, OptimizerManifest, ParamSpec, ProblemManifest, PseudoLine, Pseudocode};
 pub use optimizers::Optimizer;
 pub use problems::Problem;
 pub use rng::Rng;
+pub use trace::Trace;
 
 /// What one optimizer step did, for the status line, charts and (later) pseudocode highlighting.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]

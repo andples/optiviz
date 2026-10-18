@@ -14,7 +14,7 @@ pub fn run_many(problem_id: &str, opt_id: &str, dim: usize, starts: &mut [f64], 
         o.init(x);
         let mut rng = Rng::new(0);
         for _ in 0..iters {
-            o.step(p.as_ref(), &mut rng);
+            o.step(p.as_ref(), &mut rng, None);
         }
         x.copy_from_slice(o.x());
         p.eval(x)
