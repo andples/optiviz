@@ -35,6 +35,27 @@ pub fn optimizers_json() -> String {
     serde_json::to_string(&all).unwrap()
 }
 
+/// [min, max] of the drawn height (f, or log(1 + f) for `log_height` problems) over an n×n grid of the view
+/// box: the render worker scales the surface by it.
+#[wasm_bindgen]
+pub fn surface_range(problem_id: &str, n: usize) -> Vec<f64> {
+    let p = problems::by_id(problem_id, 2).expect("problem id");
+    let m = p.manifest();
+    let (bx, by) = (m.bounds[0], m.bounds[1]);
+    let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
+    for i in 0..n {
+        for j in 0..n {
+            let x = bx.0 + (bx.1 - bx.0) * i as f64 / (n - 1) as f64;
+            let y = by.0 + (by.1 - by.0) * j as f64 / (n - 1) as f64;
+            let f = p.eval(&[x, y]);
+            let h = if m.log_height { f.max(0.0).ln_1p() } else { f };
+            lo = lo.min(h);
+            hi = hi.max(h);
+        }
+    }
+    vec![lo, hi]
+}
+
 /// The most trail points kept; past it the trail is thinned to every other point (and the stride doubles),
 /// so a run of any length keeps its whole shape.
 const TRAIL_MAX: usize = 8192;

@@ -29,10 +29,15 @@ wasm-st:
 
 # std is rebuilt with atomics (-Z build-std); RUSTC_BOOTSTRAP=1 allows that on stable (docs/adr/0002-toolchain.md)
 wasm-threads:
-    RUSTC_BOOTSTRAP=1 RUSTFLAGS="-C target-feature=+atomics,+bulk-memory,+mutable-globals,+simd128 -C link-arg=--max-memory=4294967296" \
+    RUSTC_BOOTSTRAP=1 RUSTFLAGS="-C target-feature=+atomics,+bulk-memory,+mutable-globals,+simd128 \
+      -C link-arg=--shared-memory -C link-arg=--import-memory -C link-arg=--max-memory=4294967296 \
+      -C link-arg=--export=__wasm_init_tls -C link-arg=--export=__tls_size -C link-arg=--export=__tls_align -C link-arg=--export=__tls_base" \
       cargo build -p optiviz-wasm --release --features threads --target wasm32-unknown-unknown --target-dir target/wasm-threads \
       -Z build-std=panic_abort,std
     wasm-bindgen --target web --out-dir {{wasm_out}}/pkg-threads target/wasm-threads/wasm32-unknown-unknown/release/optiviz_wasm.wasm
+    # wasm-bindgen-rayon's worker helper imports the package by directory ('../../..'); Vite can't resolve a
+    # relative directory import, so point it at the module file
+    sed -i "s#import('../../..')#import('../../../optiviz_wasm.js')#" {{wasm_out}}/pkg-threads/snippets/wasm-bindgen-rayon-*/src/workerHelpers.js
 
 # Native benchmarks (JSON on stdout)
 bench:

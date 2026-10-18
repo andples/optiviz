@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>optiviz bench</title>
+    <style>
+      body { font: 14px/1.5 system-ui, sans-serif; margin: 32px; background: #faf9f6; color: #1d1f24; }
+      pre { background: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 12px; }
+    </style>
+  </head>
+  <body>
+    <h1>optiviz bench</h1>
+    <p>Runs the same workloads as <code>just bench</code> (native) in WebAssembly, single-threaded and threaded.
+      Takes about half a minute; copy the JSON when it says done.</p>
+    <p id="state">running…</p>
+    <pre id="out"></pre>
+    <script type="module" src="/src/bench/bench.ts"></script>
+  </body>
+</html>
