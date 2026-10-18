@@ -110,7 +110,7 @@ not decided yet: §3.2 onwards is a menu of candidate families with what each wo
 | Games and min-max (§3.8) | Gradient descent-ascent spiralling around a saddle, GAN-style dynamics | Surprising behaviour that looks great on a surface | Low |
 | Curve fitting and inverse problems (§3.9) | Levenberg-Marquardt fitting a model to data; image approximation by evolving shapes | Scientific and relatable; image evolution is striking | Low–medium |
 | Multi-objective (§3.10) | A Pareto front forming | Important in engineering | Medium |
-| User-written algorithms (§6.7) | Your own optimizer in the same views | Turns the gallery into a playground | Medium |
+| User-written algorithms (§6.8) | Your own optimizer in the same views | Turns the gallery into a playground | Medium |
 
 ### 3.2 Population and black-box methods
 
@@ -173,7 +173,7 @@ not decided yet: §3.2 onwards is a menu of candidate families with what each wo
 ### 3.10 Multi-objective and beyond
 
 Multi-objective (NSGA-II, MOEA/D with a live Pareto front), hyperparameter search over the ML family,
-quantum-inspired / QAOA toy, user-written algorithms in the browser (§6.7).
+quantum-inspired / QAOA toy, user-written algorithms in the browser (§6.8).
 
 ---
 
@@ -371,7 +371,19 @@ surface/basins/GPU paths, (b) for the CPU, a generated tiny WebAssembly module c
 native), with forward-mode automatic differentiation generating the gradient code. A bytecode interpreter is
 the fallback. Same graph also gives symbolic gradient display.
 
-### 6.7 Later: user-written algorithms
+### 6.7 Keeping a desktop app possible
+
+At a late stage optiviz may become (also) a **standalone desktop application**, if some workloads need more
+compute than a browser gives: all CPU cores without WASM overhead, f64 on the GPU, large memory, maybe CUDA/Metal
+directly. We don't build for that now, but we keep it cheap:
+
+- The core crates stay free of browser-specific code; WASM bindings live only in `crates/wasm`.
+- The UI talks to the engine only through the command protocol and the channel/frame format (§6.1), never by
+  calling into WASM directly. A native engine (e.g. a Tauri shell, or a local engine process the web app
+  connects to) can then replace the WASM worker without touching the UI or the views.
+- GPU work is in WGSL, which native `wgpu` also runs.
+
+### 6.8 Later: user-written algorithms
 
 An in-browser editor where you write an optimizer in TypeScript (or WGSL for the GPU) against a small API
 (`step(state, f, grad, rng)`), hot-reloaded into the same views. Sandboxed in its own worker. This is what
@@ -552,7 +564,8 @@ populations/ML; GPU matmul kernels with ML).
 
 ### Later
 More combinatorial problems (SAT, colouring, VRP, scheduling), multi-objective, user-written algorithms,
-Bayesian optimization at scale, embeddable scenes (`<optiviz-scene>` web component) for blog posts.
+Bayesian optimization at scale, embeddable scenes (`<optiviz-scene>` web component) for blog posts, a
+standalone desktop app with a native engine if compute demands it (§6.7).
 
 ---
 
@@ -589,11 +602,12 @@ Bayesian optimization at scale, embeddable scenes (`<optiviz-scene>` web compone
 - **Visibility:** probably public when it ships; private until then.
 - **Theme:** light by default, dark available.
 - **Browsers:** every modern browser, with fallbacks (§7.4). The owner uses Zen on a MacBook.
+- **Name:** `optiviz` for now.
+- **Desktop app:** possible at a late stage if compute requires it; keep the engine swappable (§6.7).
 - **UI:** minimal, surface-dominant, scientific look; mouse and keyboard both first class (§5).
 
 ### Open
 
-1. **Name**: `optiviz` is a placeholder.
-2. **Site integration**: should the site's `S` surface ever hand off to optiviz ("open this landscape in
+1. **Site integration**: should the site's `S` surface ever hand off to optiviz ("open this landscape in
    optiviz"), or stay separate?
-3. **Mode names**: "Learn" / "Research" are provisional, and only matter once a split happens.
+2. **Mode names**: "Learn" / "Research" are provisional, and only matter once a split happens.
