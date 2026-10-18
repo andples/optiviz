@@ -52,3 +52,7 @@ docs/            ADRs and performance notes
 ## Security
 
 See [docs/security.md](docs/security.md) for the audit and the headers hosting must send.
+
+## Licence
+
+MIT, see [LICENSE](LICENSE).
