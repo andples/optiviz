@@ -7,7 +7,8 @@ stretching along a valley, the central path of an interior point method crossing
 underneath (loss, gradient norm, step size, temperature, diversity) update live, and you can scrub back
 through the run.
 
-Status: **planning** (2026-10-18). Nothing is built yet. The working name `optiviz` is a placeholder.
+Status: **M0 done** (2026-10-18): foundations and spikes, results in `docs/perf/m0.md` and `docs/adr/`. Next: M1.
+The name `optiviz` is fine for now.
 
 ---
 
@@ -193,7 +194,7 @@ Views are generic over a problem's **kind**, not written per algorithm. An algor
 | **Network** | ML | Decision boundary, weight histograms, per-layer norms. |
 | **Polytope** | LP / constrained | 3D polytope with the simplex vertex path or the central path. |
 | **Charts** | everything | Loss / best-so-far, gradient norm, step size, temperature, population diversity, constraint violation. uPlot-class speed (millions of points). Log axes. Every run in the arena on the same axes. |
-| **Pseudocode** | everything | The algorithm's pseudocode with the current line highlighted in step mode, live variable values next to it. |
+| **Pseudocode** | everything | The algorithm's pseudocode as its source states it (§4.1), the current line highlighted in step mode, live variable values next to it, and each difference from the code explained. |
 
 ### Interaction model
 
@@ -213,6 +214,51 @@ Views are generic over a problem's **kind**, not written per algorithm. An algor
 - **Share:** the URL hash encodes problem, algorithms, parameters and seed (compact, versioned); a share button
   copies it.
 - **Export:** PNG / video (WebCodecs → MP4/WebM) of a view, CSV/JSON of metrics, the run config.
+
+### 4.1 Pseudocode that matches the literature (owner, 2026-10-18)
+
+Every algorithm carries pseudocode **taken from its source** (paper or standard textbook, cited with the
+algorithm or equation number), in the source's own notation, line for line. The implementation follows that
+pseudocode as closely as possible, so what you read is what runs.
+
+Where the code differs, the difference is **stated and explained** next to the pseudocode, on the line it
+concerns: a renamed symbol, a numerical safeguard, an equivalent but different form, a missing stopping test, a
+variant chosen on purpose. Typical reasons: numerical stability, consistency across algorithms (all step sizes
+are η), a feature that comes later (line search, noisy gradients), or an exact reformulation. No silent
+deviations: a test checks that every optimizer has a cited source, marks the lines a step executes, and that each
+deviation points at a real line.
+
+Lives in the Rust manifest (`Pseudocode { source, lines, deviations }`, crates/core/src/manifest.rs), shown by
+the pseudocode panel. Later, sub-step stepping (§4.2) reports the line being executed so it can be highlighted
+exactly.
+
+### 4.2 Trace and step debugger (owner, 2026-10-18)
+
+optiviz is also a **debugger for algorithms**: watch a run step by step, stop it where something interesting
+happens, look at why it is where it is, and try what would change it.
+
+- **Stepping:** one iteration, one sub-step (one pseudocode line: a gradient evaluation, a line-search trial,
+  one particle's update), or run to the next stopping point. The pseudocode panel highlights the line.
+- **Stopping points** (breakpoints), any number, each shown on the timeline when hit:
+  - iteration k, or every n iterations;
+  - conditions on the state: f(x) below or above a value, ‖∇f‖ below a tolerance, progress stalled for n steps,
+    step length or momentum above a threshold, a coordinate entering a region you draw on the surface;
+  - events: divergence (non-finite values), oscillation detected, a line search failing, a restart;
+  - a chosen pseudocode line (stop whenever line 11 runs).
+  The sources' stopping tests (tolerances) are offered as ready-made stopping points.
+- **Inspect at a stop:** every state variable with its value (x, g, m, v, t, step, curvature estimates),
+  shown in the pseudocode's notation; vectors drawn on the surface (gradient, momentum, the step about to be
+  taken, the Adam per-coordinate step sizes).
+- **Explain:** a short, generated reading of the state, from rules per algorithm: "the step is tiny because
+  v̂ is large: recent gradients were steep", "momentum carries it uphill: β = 0.99 remembers ~100 steps",
+  "zig-zag: the valley's curvature differs by ×400 between directions".
+- **What-if:** from any stop, branch the run with changed parameters (or a nudged x) and watch the branches side
+  by side from that point; compare where each ends up. Built on the deterministic history (§6.5).
+- **Trace:** the whole run is recorded (§6.5), so stopping points can also be set after the fact and the trace
+  scrubbed back to them; traces export with the config for sharing.
+
+Learn mode and Research mode (§2) may default differently here (explanations on by default vs. a compact state
+table), but both have all of it.
 
 ---
 
@@ -531,6 +577,11 @@ Each milestone ends with something that runs and is committed; benches and tests
 - Write ADRs for the results. **Exit:** a heightfield with one Adam marker moving on it, engine in WASM,
   render in a worker, 120 fps, numbers in a perf note.
 
+**Done 2026-10-18.** Everything above runs; numbers in `docs/perf/m0.md`, decisions in `docs/adr/0001–0005`.
+Also landed early: sourced pseudocode with deviations for GD, momentum and Adam (§4.1), and a first look of the
+minimal light UI. Still open from M0: the manual check in real browsers (Zen and Safari on the MacBook, Chrome,
+Firefox) to confirm WebGPU there and fill in §7.4's table; headless Chromium here can't present WebGPU.
+
 ### M1: The flagship vertical slice (2D continuous)
 - Problem + optimizer traits, manifests, channels, generated TS types.
 - 8 test functions, 7 first-order optimizers + L-BFGS + Newton + Nelder-Mead, line searches, schedules.
@@ -539,6 +590,8 @@ Each milestone ends with something that runs and is committed; benches and tests
 - Minimal shell: formula strip + problem gallery, generated inspector, timeline with scrubbing, the small
   chart and its expanded panel, light (default) and dark themes, KaTeX typesetting, mouse/touch and keyboard. Live
   parameter tweaks. Arena with several runs. URL sharing. Click/drag start points.
+- Step debugger basics (§4.2): single step and sub-step with the pseudocode line highlighted, stopping points
+  on iteration / f / ‖∇f‖ / divergence / pseudocode line, state inspection at a stop.
 - **Exit:** feels finished for 2D continuous; someone can learn the difference between Adam and momentum in
   two minutes.
 
@@ -546,8 +599,10 @@ Each milestone ends with something that runs and is committed; benches and tests
 - Basins map on the GPU (CPU fallback at smaller size). Many-start mode.
 - User-typed functions (§6.6).
 - Sweeps (parameter heatmaps).
-- Step mode with pseudocode highlighting, first guided presets. Introduce Learn/Research modes here if a real
-  conflict has appeared (§2).
+- The rest of the step debugger (§4.2): region and event stopping points, explanations, what-if branches,
+  stopping points set after the fact on a recorded trace.
+- First guided presets. Introduce Learn/Research modes here if a real conflict has appeared (§2).
+- Many-start throughput in threaded WASM: per-thread state instead of per-start allocation (docs/perf/m0.md).
 
 ### M3 onwards: families, chosen later
 Pick from the candidates in §3 (populations, sampling, TSP, clustering, ML, constrained/LP, min-max, fitting,

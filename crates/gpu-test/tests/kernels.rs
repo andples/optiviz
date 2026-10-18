@@ -5,6 +5,11 @@ use optiviz_core::problems;
 use optiviz_gpu_test::*;
 use std::time::Instant;
 
+/// Timing sections are skipped with OPTIVIZ_PERF=0 (CI's software Vulkan would take minutes).
+fn perf() -> bool {
+    std::env::var("OPTIVIZ_PERF").as_deref() != Ok("0")
+}
+
 fn gpu() -> Option<Gpu> {
     let g = Gpu::new();
     match &g {
@@ -310,6 +315,9 @@ fn surfaces_render_and_report_frame_time() {
         write_ppm(&dir.join(format!("{id}.ppm")), w, h, &img, pitch);
         eprintln!("{id}: covers {:.0}% of the frame, written to target/gpu-test/{id}.ppm", frac * 100.0);
     }
+    if !perf() {
+        return;
+    }
     for (w, h) in [(1920, 1080), (3840, 2160)] {
         let (_, _, t) = render_surface(&g, "rosenbrock", w, h, 60);
         println!(
@@ -422,6 +430,9 @@ fn adam_batch_kernel_agrees_with_rust_and_scales() {
     assert!(agree > 0.97, "only {:.1}% of starts end in the same basin", agree * 100.0);
 
     // scale: the basins-map workload from DESIGN.md §8 (2048² starts × 500 Adam steps)
+    if !perf() {
+        return;
+    }
     let big = grid(2048);
     let (_, t) = adam_batch(&g, expr, &big, 500, 50, 0.05);
     println!(
