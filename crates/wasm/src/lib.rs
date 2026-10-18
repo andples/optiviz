@@ -1,14 +1,22 @@
-//! The engine worker's view of the core: a `Run` steps one optimizer on one problem and keeps the trail the
-//! render worker draws; plus manifests as JSON and the M0 benchmark workloads.
+//! The engine worker's view of the core: an `Engine` wraps a `Session` (runs, timeline, stopping points,
+//! health) and lays out each frame for the render worker; plus manifests as JSON and the benchmark workloads.
 //!
-//! Frames are read straight out of WebAssembly memory (`trail_ptr`, `points_ptr`) by the worker, which copies
-//! them into the shared triple buffer (web/src/engine/frames.ts). Scalars come from getters.
+//! Frames: `build_frame` fills two buffers the worker copies straight out of WebAssembly memory into the shared
+//! triple buffer (web/src/engine/frames.ts):
+//! - `index` (f64): [runs, minima offset, minima count, 5 reserved] then per run `RUN_STRIDE` values:
+//!   trail offset, trail count, shape offset, shape count, marker u, v, start u, v, health, halted, 0, 0
+//! - `frame` (f32): u, v pairs (surface coordinates over the view box): every trail, every shape (closed), minima
 
-use optiviz_core::{Optimizer, Problem, Rng, StepInfo, multistart, optimizers, problems};
+use optiviz_core::monitor::Health;
+use optiviz_core::session::{MAX_RUNS, Session, Stop, Stops};
+use optiviz_core::{Rng, multistart, optimizers, problems};
 use wasm_bindgen::prelude::*;
 
 #[cfg(feature = "threads")]
 pub use wasm_bindgen_rayon::init_thread_pool;
+
+pub const RUN_STRIDE: usize = 12;
+pub const INDEX_HEAD: usize = 8;
 
 #[wasm_bindgen(start)]
 pub fn start() {
@@ -21,7 +29,7 @@ pub fn threads_enabled() -> bool {
     cfg!(feature = "threads")
 }
 
-/// The 2D manifests of every problem, as a JSON array.
+/// The 2D manifests of every problem with textbook coefficients, as a JSON array.
 #[wasm_bindgen]
 pub fn problems_json() -> String {
     let all: Vec<_> = problems::IDS.iter().map(|id| problems::by_id(id, 2).unwrap().manifest()).collect();
@@ -35,134 +43,256 @@ pub fn optimizers_json() -> String {
     serde_json::to_string(&all).unwrap()
 }
 
-/// [min, max] of the drawn height (f, or log(1 + f) for `log_height` problems) over an n×n grid of the view
-/// box: the render worker scales the surface by it.
-#[wasm_bindgen]
-pub fn surface_range(problem_id: &str, n: usize) -> Vec<f64> {
-    let p = problems::by_id(problem_id, 2).expect("problem id");
-    let m = p.manifest();
-    let (bx, by) = (m.bounds[0], m.bounds[1]);
-    let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
-    for i in 0..n {
-        for j in 0..n {
-            let x = bx.0 + (bx.1 - bx.0) * i as f64 / (n - 1) as f64;
-            let y = by.0 + (by.1 - by.0) * j as f64 / (n - 1) as f64;
-            let f = p.eval(&[x, y]);
-            let h = if m.log_height { f.max(0.0).ln_1p() } else { f };
-            lo = lo.min(h);
-            hi = hi.max(h);
-        }
+fn health_code(h: Health) -> f64 {
+    match h {
+        Health::Ok => 0.0,
+        Health::OutOfView => 1.0,
+        Health::Diverging => 2.0,
+        Health::Unbounded => 3.0,
+        Health::Diverged => 4.0,
     }
-    vec![lo, hi]
 }
 
-/// The most trail points kept; past it the trail is thinned to every other point (and the stride doubles),
-/// so a run of any length keeps its whole shape.
-const TRAIL_MAX: usize = 8192;
-
-#[wasm_bindgen]
-pub struct Run {
-    problem: Box<dyn Problem>,
-    opt: Box<dyn Optimizer>,
-    rng: Rng,
-    iter: u64,
-    last: StepInfo,
-    diverged: bool,
-    /// x, y pairs (f32, problem coordinates)
-    trail: Vec<f32>,
-    stride: u64,
+fn pairs(json: &str) -> Vec<(String, f64)> {
+    serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(json)
+        .map(|m| m.into_iter().filter_map(|(k, v)| v.as_f64().map(|v| (k, v))).collect())
+        .unwrap_or_default()
 }
 
 #[wasm_bindgen]
-impl Run {
+pub struct Engine {
+    s: Session,
+    stop: Option<Stop>,
+    frame: Vec<f32>,
+    index: Vec<f64>,
+}
+
+#[wasm_bindgen]
+impl Engine {
     #[wasm_bindgen(constructor)]
-    pub fn new(problem_id: &str, opt_id: &str, x0: &[f64], seed: u64) -> Result<Run, JsError> {
-        let problem = problems::by_id(problem_id, 2).ok_or_else(|| JsError::new("unknown problem"))?;
-        let opt = optimizers::by_id(opt_id).ok_or_else(|| JsError::new("unknown optimizer"))?;
-        let mut r = Run {
-            problem,
-            opt,
-            rng: Rng::new(seed),
-            iter: 0,
-            last: StepInfo::default(),
-            diverged: false,
-            trail: vec![],
-            stride: 1,
-        };
-        r.restart(x0);
-        Ok(r)
+    pub fn new(problem_id: &str, seed: u64) -> Result<Engine, JsError> {
+        let s = Session::new(problem_id, seed).ok_or_else(|| JsError::new("unknown problem"))?;
+        Ok(Engine { s, stop: None, frame: vec![], index: vec![] })
     }
 
-    pub fn restart(&mut self, x0: &[f64]) {
-        self.opt.init(x0);
-        self.iter = 0;
-        self.diverged = false;
-        self.stride = 1;
-        self.trail.clear();
-        self.trail.extend([x0[0] as f32, x0[1] as f32]);
-        let mut g = [0.0; 2];
-        let f = self.problem.grad(x0, &mut g);
-        self.last = StepInfo { f, grad_norm: g[0].hypot(g[1]), evals: 1 };
+    /* ---- problem ---- */
+
+    /// Current problem, view box and height range, as JSON for the renderer and the UI.
+    pub fn problem_json(&self) -> String {
+        serde_json::json!({
+            "manifest": self.s.manifest,
+            "coeffs": self.s.coeffs.iter().map(|(k, v)| (k.clone(), serde_json::json!(v))).collect::<serde_json::Map<_, _>>(),
+            "view": self.s.view,
+            "zrange": [self.s.zrange.0, self.s.zrange.1],
+            "start": self.s.start,
+        })
+        .to_string()
     }
 
-    pub fn set_param(&mut self, key: &str, v: f64) -> bool {
-        self.opt.set_param(key, v)
+    /// Switches problem or coefficients (`coeffs` is a JSON object of key → value).
+    pub fn set_problem(&mut self, id: &str, coeffs: &str, keep_start: bool) -> bool {
+        self.stop = None;
+        self.s.set_problem(id, &pairs(coeffs), keep_start)
     }
 
-    /// Runs up to `n` steps, stopping early if the iterate stops being finite. Returns the steps done.
-    pub fn step(&mut self, n: u32) -> u32 {
-        for k in 0..n {
-            if self.diverged {
-                return k;
+    pub fn fit_view(&mut self) {
+        self.s.fit_view();
+    }
+    pub fn reset_view(&mut self) {
+        self.s.reset_view();
+    }
+
+    /* ---- runs ---- */
+
+    pub fn add_run(&mut self, opt_id: &str, params: &str) -> i32 {
+        self.s.add_run(opt_id, &pairs(params)).map_or(-1, |i| i as i32)
+    }
+    pub fn remove_run(&mut self, i: usize) {
+        self.s.remove_run(i);
+    }
+    pub fn set_optimizer(&mut self, i: usize, opt_id: &str) -> bool {
+        self.s.set_optimizer(i, opt_id)
+    }
+    pub fn set_param(&mut self, i: usize, key: &str, v: f64) -> bool {
+        self.s.set_param(i, key, v)
+    }
+    pub fn select(&mut self, i: usize) {
+        self.s.selected = i.min(self.s.runs.len().saturating_sub(1));
+    }
+    pub fn run_count(&self) -> usize {
+        self.s.runs.len()
+    }
+    pub fn max_runs(&self) -> usize {
+        MAX_RUNS
+    }
+
+    /// Every run's state for the UI, as JSON.
+    pub fn runs_json(&self) -> String {
+        let runs: Vec<_> = self
+            .s
+            .runs
+            .iter()
+            .map(|r| {
+                serde_json::json!({
+                    "opt": r.opt_id,
+                    "params": r.params.iter().map(|(k, v)| (k.clone(), serde_json::json!(v))).collect::<serde_json::Map<_, _>>(),
+                    "health": r.health,
+                    "halted": r.halted,
+                    "f": r.f_now,
+                    "gradNorm": r.last.grad_norm,
+                    "x": r.x(),
+                    "evals": r.evals,
+                    "diagnosis": r.diagnosis,
+                })
+            })
+            .collect();
+        serde_json::to_string(&runs).unwrap()
+    }
+
+    /// Run i's metric rows (iter, f, ‖∇f‖, step length), flattened.
+    pub fn metrics(&self, i: usize) -> Vec<f64> {
+        self.s.runs.get(i).map(|r| r.metrics().iter().flatten().copied().collect()).unwrap_or_default()
+    }
+
+    /// The trace of run i's last step, as JSON (for the debugger's state panel).
+    pub fn inspect(&self, i: usize) -> String {
+        serde_json::to_string(&self.s.inspect(i).unwrap_or_default()).unwrap()
+    }
+
+    /* ---- start point ---- */
+
+    pub fn set_start(&mut self, x: f64, y: f64) {
+        self.s.set_start([x, y]);
+    }
+    /// Sets the start from surface coordinates (the contour view).
+    pub fn set_start_uv(&mut self, u: f64, v: f64) {
+        let (x, y) = self.s.from_uv(u, v);
+        self.s.set_start([x, y]);
+    }
+    /// Sets the start where a world-space ray meets the surface; false if it misses.
+    #[allow(clippy::too_many_arguments)]
+    pub fn pick_start(&mut self, ox: f64, oy: f64, oz: f64, dx: f64, dy: f64, dz: f64, height_scale: f64) -> bool {
+        match self.s.pick([ox, oy, oz], [dx, dy, dz], height_scale) {
+            Some(p) => {
+                self.s.set_start(p);
+                true
             }
-            self.last = self.opt.step(self.problem.as_ref(), &mut self.rng);
-            self.iter += 1;
-            let x = self.opt.x();
-            if !x.iter().all(|v| v.is_finite()) {
-                self.diverged = true;
-                return k + 1;
-            }
-            if self.iter.is_multiple_of(self.stride) {
-                self.trail.extend([x[0] as f32, x[1] as f32]);
-                if self.trail.len() / 2 > TRAIL_MAX {
-                    let thinned: Vec<f32> = self.trail.chunks(2).step_by(2).flatten().copied().collect();
-                    self.trail = thinned;
-                    self.stride *= 2;
-                }
-            }
+            None => false,
         }
-        n
     }
 
+    /* ---- timeline ---- */
+
+    pub fn restart(&mut self) {
+        self.stop = None;
+        self.s.restart();
+    }
+    /// Up to n iterations of every run; returns those done (fewer if a stopping point fired).
+    pub fn step(&mut self, n: u32) -> u32 {
+        let (done, stop) = self.s.step(n as u64);
+        if stop.is_some() {
+            self.stop = stop;
+        }
+        done as u32
+    }
+    /// The stopping point that fired last, as JSON ("" if none); reading clears it.
+    pub fn take_stop(&mut self) -> String {
+        self.stop.take().map(|s| serde_json::to_string(&s).unwrap()).unwrap_or_default()
+    }
+    pub fn seek(&mut self, k: f64) {
+        self.s.seek(k.max(0.0) as u64);
+    }
     pub fn iter(&self) -> f64 {
-        self.iter as f64
+        self.s.iter as f64
     }
-    /// f at the start of the last step
-    pub fn f(&self) -> f64 {
-        self.last.f
+    pub fn head(&self) -> f64 {
+        self.s.head as f64
     }
-    pub fn grad_norm(&self) -> f64 {
-        self.last.grad_norm
+    pub fn all_halted(&self) -> bool {
+        self.s.runs.iter().all(|r| r.halted)
     }
-    pub fn diverged(&self) -> bool {
-        self.diverged
+
+    /// Stopping points from JSON: {at_iter, every, f_below, grad_below, on_diverge, line} (missing = off).
+    pub fn set_stops(&mut self, json: &str) {
+        let v: serde_json::Value = serde_json::from_str(json).unwrap_or_default();
+        let num = |k: &str| v.get(k).and_then(|x| x.as_f64());
+        self.s.stops = Stops {
+            at_iter: num("at_iter").map(|x| x as u64),
+            every: num("every").map(|x| x as u64),
+            f_below: num("f_below"),
+            grad_below: num("grad_below"),
+            on_diverge: v.get("on_diverge").and_then(|x| x.as_bool()).unwrap_or(true),
+            line: num("line").map(|x| x as usize),
+        };
     }
-    pub fn x(&self) -> f64 {
-        self.opt.x()[0]
+
+    /* ---- frames ---- */
+
+    /// Lays out the current state (see the module docs). Then read `frame_ptr/len` and `index_ptr/len`.
+    pub fn build_frame(&mut self) {
+        let s = &self.s;
+        self.frame.clear();
+        self.index.clear();
+        self.index.resize(INDEX_HEAD + RUN_STRIDE * s.runs.len(), 0.0);
+        self.index[0] = s.runs.len() as f64;
+        let uv = |x: f64, y: f64| {
+            let (u, v) = s.to_uv(x, y);
+            [u as f32, v as f32]
+        };
+        let mut runs_idx = vec![];
+        for r in &s.runs {
+            let t0 = self.frame.len() / 2;
+            for p in r.trail().chunks(2) {
+                self.frame.extend(uv(p[0], p[1]));
+            }
+            let tn = self.frame.len() / 2 - t0;
+            let s0 = self.frame.len() / 2;
+            if let Some(sh) = r.shape() {
+                for p in sh.chunks(2) {
+                    self.frame.extend(uv(p[0], p[1]));
+                }
+                self.frame.extend(uv(sh[0], sh[1]));
+            }
+            let sn = self.frame.len() / 2 - s0;
+            let x = r.x();
+            let (mu, mv) = if x.iter().all(|v| v.is_finite()) { s.to_uv(x[0], x[1]) } else { (f64::NAN, f64::NAN) };
+            let (su, sv) = s.to_uv(s.start[0], s.start[1]);
+            runs_idx.push([
+                t0 as f64,
+                tn as f64,
+                s0 as f64,
+                sn as f64,
+                mu,
+                mv,
+                su,
+                sv,
+                health_code(r.health),
+                if r.halted { 1.0 } else { 0.0 },
+                0.0,
+                0.0,
+            ]);
+        }
+        let m0 = self.frame.len() / 2;
+        for m in &s.manifest.minima {
+            self.frame.extend(uv(m[0], m[1]));
+        }
+        self.index[1] = m0 as f64;
+        self.index[2] = (self.frame.len() / 2 - m0) as f64;
+        for (i, r) in runs_idx.iter().enumerate() {
+            self.index[INDEX_HEAD + RUN_STRIDE * i..INDEX_HEAD + RUN_STRIDE * (i + 1)].copy_from_slice(r);
+        }
     }
-    pub fn y(&self) -> f64 {
-        self.opt.x()[1]
+    pub fn frame_ptr(&self) -> *const f32 {
+        self.frame.as_ptr()
     }
-    /// f at the current iterate
-    pub fn f_now(&self) -> f64 {
-        self.problem.eval(self.opt.x())
+    pub fn frame_len(&self) -> usize {
+        self.frame.len()
     }
-    pub fn trail_ptr(&self) -> *const f32 {
-        self.trail.as_ptr()
+    pub fn index_ptr(&self) -> *const f64 {
+        self.index.as_ptr()
     }
-    /// Number of f32 values (2 per point)
-    pub fn trail_len(&self) -> usize {
-        self.trail.len()
+    pub fn index_len(&self) -> usize {
+        self.index.len()
     }
 }
 
@@ -176,7 +306,7 @@ pub fn bench_gd_rosenbrock(iters: u32) -> f64 {
     o.init(&[-1.2, 1.0]);
     let mut rng = Rng::new(0);
     for _ in 0..iters {
-        o.step(p.as_ref(), &mut rng);
+        o.step(p.as_ref(), &mut rng, None);
     }
     p.eval(o.x())
 }
@@ -222,5 +352,44 @@ impl Points {
     }
     pub fn is_empty(&self) -> bool {
         self.xy.is_empty()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn frame_layout_is_consistent() {
+        let mut e = Engine::new("himmelblau", 1).unwrap();
+        e.add_run("adam", "{}");
+        e.add_run("nelder-mead", "{}");
+        e.step(20);
+        e.build_frame();
+        assert_eq!(e.index[0], 2.0);
+        let n_minima = e.index[2] as usize;
+        assert_eq!(n_minima, 4);
+        let total = e.frame.len() / 2;
+        for i in 0..2 {
+            let r = &e.index[INDEX_HEAD + RUN_STRIDE * i..];
+            assert!(r[0] + r[1] <= total as f64 && r[2] + r[3] <= total as f64);
+        }
+        // Nelder–Mead draws a closed triangle: 3 vertices + the first again
+        assert_eq!(e.index[INDEX_HEAD + RUN_STRIDE + 3], 4.0);
+        assert_eq!(e.index[1] as usize + n_minima, total);
+    }
+
+    #[test]
+    fn stops_and_problem_json_roundtrip() {
+        let mut e = Engine::new("bowl", 1).unwrap();
+        e.add_run("gd", r#"{"lr": 0.11}"#);
+        e.set_stops(r#"{"on_diverge": true}"#);
+        e.step(10_000);
+        let stop = e.take_stop();
+        assert!(stop.contains("diverging"), "{stop}");
+        assert!(e.runs_json().contains("2/L"));
+        assert!(e.set_problem("bowl", r#"{"kappa": 50}"#, true));
+        let pj: serde_json::Value = serde_json::from_str(&e.problem_json()).unwrap();
+        assert_eq!(pj["coeffs"]["kappa"], 50.0);
     }
 }
