@@ -1,0 +1,19 @@
+[package]
+name = "optiviz-core"
+version = "0.1.0"
+description = "Problems, optimizers and their manifests: the f64 reference engine shared by web, native and tests"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+default = []
+parallel = ["dep:rayon"]
+
+[dependencies]
+serde.workspace = true
+rayon = { workspace = true, optional = true }
+
+[dev-dependencies]
+serde_json.workspace = true

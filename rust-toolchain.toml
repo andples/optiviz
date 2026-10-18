@@ -1,0 +1,6 @@
+# Stable Rust. The threaded WebAssembly build needs `-Z build-std` (std recompiled with atomics); we get it on
+# stable with RUSTC_BOOTSTRAP=1 instead of a nightly toolchain (docs/adr/0002-toolchain.md).
+[toolchain]
+channel = "stable"
+components = ["rust-src", "rustfmt", "clippy"]
+targets = ["wasm32-unknown-unknown"]
