@@ -431,6 +431,11 @@ surface/basins/GPU paths, (b) for the CPU, a generated tiny WebAssembly module c
 native), with forward-mode automatic differentiation generating the gradient code. A bytecode interpreter is
 the fallback. Same graph also gives symbolic gradient display.
 
+
+**Security:** the typed text never reaches a shader or the engine as text. It is parsed into an expression
+graph (fixed operators and functions, numeric literals, named symbols), and all code is generated from the graph
+(docs/security.md).
+
 ### 6.7 Keeping a desktop app possible
 
 At a late stage optiviz may become (also) a **standalone desktop application**, if some workloads need more

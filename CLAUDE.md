@@ -30,7 +30,7 @@ DESIGN.md §7.4's support table. Next is M2.
   cited pseudocode, `tr!` calls with its line indices, and deviations; the generic tests in optimizers/mod.rs then
   check it. The UI needs nothing.
 - svelte-check 4.7 needs TypeScript 6 (not 7).
-- Previews: run on localhost and tell the owner the port; their Mac reaches it through their tunnel.
+- Previews: run on localhost and tell the owner the port.
   `just dev` serves :5173; `pnpm preview` serves the production build on :4173.
 
 ## Direction from the owner (keep to it)

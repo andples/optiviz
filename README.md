@@ -47,3 +47,7 @@ shaders/         WGSL + GLSL twins, shared by the browser and gpu-test
 web/             Svelte 5 UI, engine worker, render worker (WebGPU / WebGL2 back-ends), Playwright tests
 docs/            ADRs and performance notes
 ```
+
+## Security
+
+See [docs/security.md](docs/security.md) for the audit and the headers hosting must send.

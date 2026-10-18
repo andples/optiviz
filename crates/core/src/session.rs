@@ -110,7 +110,14 @@ impl Run {
         Some(r)
     }
 
+    /// Sets a parameter, clamped to its declared range; non-finite values and unknown keys are refused.
+    /// (Values can come from a share link, so they are untrusted.)
     fn set(&mut self, key: &str, v: f64) -> bool {
+        let Some(spec) = self.opt.manifest().params.into_iter().find(|s| s.key == key) else { return false };
+        if !v.is_finite() {
+            return false;
+        }
+        let v = v.clamp(spec.min, spec.max);
         if !self.opt.set_param(key, v) {
             return false;
         }
@@ -710,6 +717,16 @@ mod tests {
         let (u, v) = s.to_uv(0.5, -0.8);
         let p = s.pick([u, 5.0, -v], [0.0, -1.0, 0.0], 0.62).unwrap();
         assert!((p[0] - 0.5).abs() < 1e-6 && (p[1] + 0.8).abs() < 1e-6, "{p:?}");
+    }
+
+    #[test]
+    fn parameters_from_outside_are_clamped_and_non_finite_refused() {
+        let mut s = session("bowl", &["adam"]);
+        assert!(s.set_param(0, "lr", 1e300));
+        assert_eq!(s.runs[0].get("lr"), Some(2.0));
+        assert!(!s.set_param(0, "lr", f64::NAN));
+        assert!(!s.set_param(0, "nope", 1.0));
+        assert_eq!(s.runs[0].get("lr"), Some(2.0));
     }
 
     #[test]
