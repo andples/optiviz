@@ -32,14 +32,30 @@ fn compute(g: &Gpu, code: &str) -> wgpu::ComputePipeline {
     })
 }
 
+/// Each problem with its textbook coefficients, and with some changed (their values go into the shader as
+/// literals, so both paths need checking).
+fn cases() -> Vec<(&'static str, Vec<(&'static str, f64)>)> {
+    let mut v: Vec<_> = problems::IDS.iter().map(|&id| (id, vec![])).collect();
+    v.extend([
+        ("rosenbrock", vec![("a", -0.5), ("b", 20.0)]),
+        ("himmelblau", vec![("a", 9.0), ("b", 5.5)]),
+        ("ackley", vec![("a", 10.0), ("b", 0.5), ("c", 3.0)]),
+        ("bowl", vec![("kappa", 50.0), ("theta", -30.0)]),
+        ("styblinski-tang", vec![("a", 10.0), ("b", -3.0)]),
+        ("saddle", vec![("c", -0.5)]),
+        ("hills", vec![("seed", 7.0), ("count", 4.0), ("width", 1.2)]),
+    ]);
+    v
+}
+
 #[test]
 fn shader_expressions_match_the_rust_reference() {
     let Some(g) = gpu() else { return };
-    for &id in problems::IDS {
-        let p = problems::by_id(id, 2).unwrap();
+    for (id, coeffs) in cases() {
+        let p = problems::build(id, 2, &coeffs).unwrap();
         let m = p.manifest();
-        let expr = m.shader_expr.unwrap();
-        let pipe = compute(&g, &fill(EVAL_KERNEL, expr, 0));
+        let expr = m.shader_expr.clone().unwrap();
+        let pipe = compute(&g, &fill(EVAL_KERNEL, &expr, 0));
         // a grid over the view box plus the minima
         let n = 64;
         let mut pts: Vec<[f32; 2]> = vec![];
@@ -76,9 +92,9 @@ fn shader_expressions_match_the_rust_reference() {
             let want = p.eval(&[pt[0] as f64, pt[1] as f64]);
             let err = (gv as f64 - want).abs() / (1.0 + want.abs());
             worst = worst.max(err);
-            assert!(err < 5e-4, "{id} at {pt:?}: GPU {gv} vs Rust {want}");
+            assert!(err < 5e-4, "{id} {coeffs:?} at {pt:?}: GPU {gv} vs Rust {want}");
         }
-        eprintln!("{id}: worst relative error {worst:.2e} over {} points", pts.len());
+        eprintln!("{id} {coeffs:?}: worst relative error {worst:.2e} over {} points", pts.len());
     }
 }
 
@@ -164,9 +180,9 @@ fn render_pipelines(g: &Gpu, expr: &str, n: u32, format: wgpu::TextureFormat) ->
 #[test]
 fn render_shaders_compile_and_link_for_every_problem() {
     let Some(g) = gpu() else { return };
-    for &id in problems::IDS {
-        let expr = problems::by_id(id, 2).unwrap().manifest().shader_expr.unwrap();
-        render_pipelines(&g, expr, 384, wgpu::TextureFormat::Rgba8Unorm);
+    for (id, coeffs) in cases() {
+        let expr = problems::build(id, 2, &coeffs).unwrap().manifest().shader_expr.unwrap();
+        render_pipelines(&g, &expr, 384, wgpu::TextureFormat::Rgba8Unorm);
         eprintln!("{id}: surface, trail and points pipelines OK");
     }
 }
@@ -177,7 +193,7 @@ fn render_surface(g: &Gpu, id: &str, w: u32, h: u32, frames: u32) -> (Vec<u8>, u
     let m = p.manifest();
     let n = 384u32;
     let format = wgpu::TextureFormat::Rgba8Unorm;
-    let [surface, ..] = render_pipelines(g, m.shader_expr.unwrap(), n, format);
+    let [surface, ..] = render_pipelines(g, m.shader_expr.as_deref().unwrap(), n, format);
     let scene = scene(&m, zrange(p.as_ref(), 257), w, h);
     let scene_buf = g.uniform(bytemuck::cast_slice(&scene));
     let draw_buf = g.uniform(&[0u8; DRAW_FLOATS * 4]);
@@ -386,7 +402,8 @@ fn adam_batch_kernel_agrees_with_rust_and_scales() {
     let Some(g) = gpu() else { return };
     let p = problems::by_id("himmelblau", 2).unwrap();
     let m = p.manifest();
-    let expr = m.shader_expr.unwrap();
+    let expr = m.shader_expr.clone().unwrap();
+    let expr = expr.as_str();
     let grid = |n: usize| -> Vec<[f32; 2]> {
         let (bx, by) = (m.bounds[0], m.bounds[1]);
         (0..n * n)
@@ -418,7 +435,7 @@ fn adam_batch_kernel_agrees_with_rust_and_scales() {
         o.init(&[s[0] as f64, s[1] as f64]);
         let mut rng = optiviz_core::Rng::new(0);
         for _ in 0..400 {
-            o.step(p.as_ref(), &mut rng);
+            o.step(p.as_ref(), &mut rng, None);
         }
         let x = o.x();
         if nearest(x[0], x[1]) == nearest(e[0] as f64, e[1] as f64) {

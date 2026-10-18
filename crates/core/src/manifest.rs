@@ -25,6 +25,8 @@ pub struct ProblemManifest {
     pub f_min: Option<f64>,
     /// One line on what makes this landscape interesting
     pub blurb: &'static str,
+    /// Editable coefficients (the problem panel is generated from these)
+    pub params: Vec<ParamSpec>,
 }
 
 /// A tunable parameter. The inspector is generated from these.
