@@ -38,6 +38,22 @@ Nesterov, AdaGrad, RMSProp, Adam, AdamW, Newton's method (with Hessian modificat
 simplex is drawn). Parameters use the mathematical symbols (η, β₁, ρ, …) with a slider (log scale where it
 makes sense) and an exact-value field; changes apply from the current iteration on.
 
+## Several starting points and random restarts
+
+At the top of the runs panel:
+
+- **Starting points** (1, 4, 16, 64): every run starts from the clicked point plus random points in the view.
+  All runs use the same random points, so the comparison stays fair. The random points show as small rings;
+  each run's other walkers show as small discs in its colour.
+- **Random restart** (never, converged, failed, both): a point that has converged (‖∇f‖ or its step
+  effectively zero for 10 iterations) or failed (diverging, unbounded, not finite) jumps to a new random point
+  and starts again. Each run keeps the best point any of its walkers found, shown as a ring in its colour; the
+  chart then plots the best value so far.
+
+Under each run: how many points, restarts so far, how many are failing, and the best f. With several points or
+restarts on failure, divergence doesn't pause the run (it would interrupt constantly); failing points are
+shown hollow and counted instead.
+
 ## Watching and stepping
 
 - **Speed**: 10, 60 or 600 iterations per second, or as fast as the engine goes.

@@ -3,11 +3,20 @@
   import { RUN_COLORS } from "./colors";
   import ParamSlider from "./ParamSlider.svelte";
   import Tex from "./Tex.svelte";
+  import { sciTex } from "./format";
 
   let adding = $state(false);
   const sel = $derived(selectedRun());
   const runs = $derived(app.status?.runs ?? []);
   const name = (id: string) => app.optimizers.find((o) => o.id === id)?.name ?? id;
+  const RESTART = [
+    { label: "never", c: false, f: false },
+    { label: "converged", c: true, f: false },
+    { label: "failed", c: false, f: true },
+    { label: "both", c: true, f: true },
+  ];
+  const ms = $derived(app.multistart);
+  const multi = $derived(ms.starts > 1 || ms.onConverged || ms.onFailed);
   const healthNote: Record<string, string> = {
     "out-of-view": "outside the view",
     diverging: "diverging",
@@ -17,6 +26,24 @@
 </script>
 
 <aside class="panel runs-panel">
+  <div class="multi">
+    <div class="row" title="Every run starts from the clicked point, plus random points in the view">
+      <span class="lbl">Starting points</span>
+      <div class="seg" role="group" aria-label="Starting points">
+        {#each [1, 4, 16, 64] as n}
+          <button class:sel={ms.starts === n} onclick={() => app.setMultistart({ starts: n })}>{n}</button>
+        {/each}
+      </div>
+    </div>
+    <div class="row" title="A point that has converged or failed jumps to a random point and starts again; the best point found is kept">
+      <span class="lbl">Random restart</span>
+      <div class="seg" role="group" aria-label="Random restart">
+        {#each RESTART as o}
+          <button class:sel={ms.onConverged === o.c && ms.onFailed === o.f} onclick={() => app.setMultistart({ onConverged: o.c, onFailed: o.f })}>{o.label}</button>
+        {/each}
+      </div>
+    </div>
+  </div>
   <div class="runs">
     {#each runs as r, i}
       <div class="run" class:sel={i === app.selected}>
@@ -27,6 +54,12 @@
         </button>
         {#if runs.length > 1}<button class="x" title="Remove this run" onclick={() => app.removeRun(i)}>×</button>{/if}
       </div>
+      {#if multi}
+        <div class="walk">
+          {#if r.walkers > 1}{r.walkers} points · {/if}{r.restarts} restart{r.restarts === 1 ? "" : "s"}{#if r.failed} · {r.failed} failing{/if}
+          · best <Tex tex={`f = ${sciTex(r.bestF)}`} />
+        </div>
+      {/if}
     {/each}
     {#if runs.length < 8}
       <button class="add" onclick={() => (adding = !adding)} title="Race another optimizer on the same problem and start">+ add a run</button>
@@ -64,7 +97,14 @@
 </aside>
 
 <style>
-  .runs-panel { position: absolute; top: 60px; right: 16px; width: 280px; padding: 8px 10px; display: flex; flex-direction: column; gap: 8px; max-height: calc(100vh - 170px); overflow: auto; }
+  .runs-panel { position: absolute; top: 60px; right: 16px; width: 310px; padding: 8px 10px; display: flex; flex-direction: column; gap: 8px; max-height: calc(100vh - 170px); overflow: auto; }
+  .multi { display: flex; flex-direction: column; gap: 5px; padding-bottom: 8px; border-bottom: 1px solid var(--rule); }
+  .row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .lbl { color: var(--dim); font-size: 12px; white-space: nowrap; }
+  .seg { display: flex; background: var(--track); border-radius: 7px; padding: 2px; }
+  .seg button { padding: 1px 7px; border-radius: 5px; color: var(--dim); font-size: 11.5px; }
+  .seg button.sel { background: var(--panel-solid); color: var(--ink); }
+  .walk { color: var(--faint); font-size: 11px; padding: 0 6px 3px 22px; }
   .runs { display: flex; flex-direction: column; gap: 2px; }
   .run { display: flex; align-items: center; border-radius: 6px; }
   .run.sel { background: var(--track); }

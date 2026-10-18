@@ -134,3 +134,15 @@ test("contour view and a share link round trip", async ({ page }) => {
   await expect(page.locator(".run")).toHaveCount(2);
   await page.screenshot({ path: "test-results/contour.png" });
 });
+
+test("several random starting points and random restarts", async ({ page }) => {
+  await open(page, "", share({ p: "rastrigin", r: [{ o: "gd", p: { lr: 0.003 } }] }));
+  await page.getByRole("group", { name: "Starting points" }).getByRole("button", { name: "16" }).click();
+  await page.getByRole("group", { name: "Random restart" }).getByRole("button", { name: "both" }).click();
+  await expect(page.locator(".walk")).toContainText("16 points", { timeout: 10_000 });
+  await expect.poll(async () => Number((await page.locator(".walk").first().innerText()).match(/(\d+) restart/)?.[1] ?? 0), { timeout: 20_000 }).toBeGreaterThan(3);
+  // the setting travels in a share link
+  await page.getByTitle("Copy a link to this exact setup").click();
+  await page.reload();
+  await expect(page.locator(".walk")).toContainText("16 points", { timeout: 20_000 });
+});

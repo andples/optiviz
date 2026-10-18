@@ -8,7 +8,7 @@
  * unbounded → an extra pulsing ring; diverged → a hollow ring at the last finite point.
  */
 
-import { H, INDEX_HEAD, R, RUN_STRIDE, readerFor, type FrameReader } from "../engine/frames";
+import { H, IH, INDEX_HEAD, R, RUN_STRIDE, readerFor, type FrameReader } from "../engine/frames";
 import type { ProblemInfo, RenderCmd, RenderMsg, Theme, ViewMode } from "../engine/protocol";
 import type { Backend, DrawItem } from "./backend";
 import { ContourCamera, OrbitCamera, rayThrough } from "./camera";
@@ -206,12 +206,13 @@ export class RenderHost {
     be.draw(this.scene, this.items, this.theme.bg);
   }
 
-  /** Points used in the data area: the end of the last trail, shape or minima. */
+  /** Points used in the data area: the end of the last region the index points into. */
   private dataPoints() {
-    let n = this.index[1] + this.index[2];
-    for (let i = 0; i < this.index[0]; i++) {
+    const ix = this.index;
+    let n = Math.max(ix[IH.minOff] + ix[IH.minN], ix[IH.startsOff] + ix[IH.startsN]);
+    for (let i = 0; i < ix[IH.runs]; i++) {
       const r = INDEX_HEAD + RUN_STRIDE * i;
-      n = Math.max(n, this.index[r + R.trailOff] + this.index[r + R.trailN], this.index[r + R.shapeOff] + this.index[r + R.shapeN]);
+      for (const [o, c] of [[R.trailOff, R.trailN], [R.shapeOff, R.shapeN], [R.okOff, R.okN], [R.badOff, R.badN]]) n = Math.max(n, ix[r + o] + ix[r + c]);
     }
     return n;
   }
@@ -286,6 +287,9 @@ export class RenderHost {
         this.item("trail", "data", s0, sn, [...halo, 0.8, 4.5, 0.008, 1, sn]);
         this.item("trail", "data", s0, sn, [...c, 0.9, 1.6, 0.009, 1, sn]);
       }
+      // the other walkers (several starting points): small discs; failed ones hollow
+      this.item("points", "data", ix[r + R.okOff], ix[r + R.okN], [...c, 0.95, sel ? 4.2 : 3.6, 0.012, 1, 0]);
+      this.item("points", "data", ix[r + R.badOff], ix[r + R.badN], [...c, 0.9, 4.5, 0.012, 2, 0]);
       const hc = ix[r + R.health];
       const halted = ix[r + R.halted] > 0;
       const size = sel ? 7.5 : 6.5;
@@ -306,7 +310,19 @@ export class RenderHost {
       this.item("trail", "marks", arrowAt, 5, [...halo, 0.8, 5, 0.016, 1, 5]);
       this.item("trail", "marks", arrowAt, 5, [...c, 1, 2.2, 0.017, 1, 5]);
     }
-    // known minima, the start, the stress swarm
+    // the best point each run has found (with several starts or restarts): a ring around a dot
+    for (const i of order) {
+      const r = INDEX_HEAD + RUN_STRIDE * i;
+      if (!Number.isFinite(ix[r + R.bu])) continue;
+      const c = RUN_COLORS[i % RUN_COLORS.length].rgb;
+      this.marks[2 * m] = ix[r + R.bu];
+      this.marks[2 * m + 1] = ix[r + R.bv];
+      this.item("points", "marks", m, 1, [...halo, 0.9, 11, 0.02, 2, 0]);
+      this.item("points", "marks", m, 1, [...c, 1, 9.5, 0.021, 2, 0]);
+      m++;
+    }
+    // known minima, the start(s), the stress swarm
+    this.item("points", "data", ix[IH.startsOff], ix[IH.startsN], [...ink, 0.45, 3, 0.01, 2, 0]);
     this.item("points", "data", ix[1], ix[2], [...ink, 0.7, 6, 0.004, 2, 0]);
     if (runs > 0) this.item("points", "marks", startAt, 1, [...ink, 0.9, 5, 0.012, 2, 0]);
     if (this.points > 0) this.item("points", "stress", 0, this.points, [0.1, 0.1, 0.12, 0.55, 1.2, 0.004, 0, 0]);

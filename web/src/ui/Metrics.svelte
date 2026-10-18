@@ -19,12 +19,13 @@
   }
   const fLines = $derived(lines(1, fmin ?? 0));
   const fLog = $derived(fmin !== null);
+  const best = $derived(app.multistart.starts > 1 || app.multistart.onConverged || app.multistart.onFailed);
   const at = $derived(app.status && app.status.iter < app.status.head ? app.status.iter : null);
 </script>
 
 <div class="panel metrics" class:big={app.bigChart}>
   <button class="expand" onclick={() => (app.bigChart = !app.bigChart)} title={app.bigChart ? "Smaller" : "All metrics"}>{app.bigChart ? "–" : "+"}</button>
-  <Chart lines={fLines} log={fLog} {at} label={fLog ? "f(xₖ) − f*" : "f(xₖ)"} height={app.bigChart ? 150 : 96} />
+  <Chart lines={fLines} log={fLog} {at} label={(best ? "best " : "") + (fLog ? "f(xₖ) − f*" : "f(xₖ)")} height={app.bigChart ? 150 : 96} />
   {#if app.bigChart}
     <Chart lines={lines(2)} log {at} label="‖∇f(xₖ)‖" height={130} />
     <Chart lines={lines(3)} log {at} label="step length ‖xₖ₊₁ − xₖ‖" height={130} />

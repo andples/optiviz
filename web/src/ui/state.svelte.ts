@@ -39,6 +39,8 @@ interface Shared {
   s?: number[];
   r: { o: string; p?: Record<string, number> }[];
   v?: ViewMode;
+  /** starting points, restart on converged / failed */
+  m?: [number, boolean, boolean];
 }
 
 const DEFAULT: Shared = { p: "rosenbrock", r: [{ o: "adam" }, { o: "momentum" }] };
@@ -61,6 +63,8 @@ class AppState {
   private lineStepping = false;
   stop = $state<Stop | null>(null);
   stops = $state<Stops>({ on_diverge: true });
+  /** starting points per run and random restarts (session-wide) */
+  multistart = $state({ starts: 1, onConverged: false, onFailed: false });
 
   selected = $state(0);
   running = $state(false);
@@ -141,6 +145,7 @@ class AppState {
     this.engine({ type: "problem", id: shared.p, coeffs: shared.c ?? {}, keepStart: false });
     for (const r of shared.r.slice(0, 8)) this.engine({ type: "addRun", opt: r.o, params: r.p ?? {} });
     if (shared.s?.length === 2) this.engine({ type: "start", x: shared.s[0], y: shared.s[1] });
+    if (shared.m) this.setMultistart({ starts: Math.min(64, Math.max(1, Math.round(shared.m[0]) || 1)), onConverged: !!shared.m[1], onFailed: !!shared.m[2] });
     if (shared.v) this.setView(shared.v);
     this.play();
   }
@@ -198,6 +203,12 @@ class AppState {
     this.stops = { ...this.stops, ...patch };
     for (const k of Object.keys(this.stops) as (keyof Stops)[]) if (this.stops[k] === undefined) delete this.stops[k];
     this.engine({ type: "stops", stops: $state.snapshot(this.stops) });
+  }
+  setMultistart(patch: Partial<{ starts: number; onConverged: boolean; onFailed: boolean }>) {
+    this.multistart = { ...this.multistart, ...patch };
+    const m = this.multistart;
+    this.stop = null;
+    this.engine({ type: "multistart", starts: m.starts, onConverged: m.onConverged, onFailed: m.onFailed });
   }
   toggleLineStop(line: number) {
     this.setStops({ line: this.stops.line === line ? undefined : line });
@@ -275,6 +286,10 @@ class AppState {
       s: info.start,
       r: st.runs.map((r) => ({ o: r.opt, p: $state.snapshot(r.params) })),
       v: this.view === "surface" ? undefined : this.view,
+      m:
+        this.multistart.starts > 1 || this.multistart.onConverged || this.multistart.onFailed
+          ? [this.multistart.starts, this.multistart.onConverged, this.multistart.onFailed]
+          : undefined,
     };
     const h = btoa(unescape(encodeURIComponent(JSON.stringify(s)))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
     return `${location.origin}${location.pathname}${location.search}#${h}`;

@@ -67,6 +67,13 @@ export interface RunStatus {
   x: number[];
   evals: number;
   diagnosis: Diagnosis | null;
+  /** starting points (walkers) in this run, how many failed / converged now, restarts so far */
+  walkers: number;
+  failed: number;
+  converged: number;
+  restarts: number;
+  bestF: number;
+  bestX: number[];
 }
 
 export type Stop =
@@ -109,6 +116,7 @@ export type EngineCmd =
   | { type: "seek"; k: number }
   | { type: "speed"; speed: Speed }
   | { type: "stops"; stops: Stops }
+  | { type: "multistart"; starts: number; onConverged: boolean; onFailed: boolean }
   | { type: "startUv"; u: number; v: number }
   | { type: "start"; x: number; y: number }
   | { type: "pickStart"; o: number[]; d: number[]; hs: number }

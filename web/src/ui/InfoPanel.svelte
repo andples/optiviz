@@ -25,7 +25,7 @@
 {/if}
 
 <style>
-  .info { position: absolute; top: 60px; right: 310px; width: 340px; padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+  .info { position: absolute; top: 60px; right: 340px; width: 340px; padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
   .dim { color: var(--dim); margin-top: -2px; word-break: break-word; }
   .note { color: var(--dim); font-style: italic; }
   @media (max-width: 720px) { .info { right: 16px; left: 16px; width: auto; } }

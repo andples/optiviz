@@ -246,6 +246,10 @@ self.onmessage = async (e: MessageEvent<EngineCmd>) => {
         speed = cmd.speed;
         owed = 0;
         break;
+      case "multistart":
+        eng.set_multistart(cmd.starts, cmd.onConverged, cmd.onFailed);
+        changed(true);
+        break;
       case "stops":
         eng.set_stops(JSON.stringify(cmd.stops));
         break;

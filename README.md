@@ -4,7 +4,8 @@ Watch optimization algorithms work, at the scale they are really run: lit 3D los
 tours and real neural-network training, rendered with WebGPU (WebGL2 fallback) and computed in Rust/WebAssembly.
 
 **Status:** M1 done: the 2D continuous experience. Ten problems with editable coefficients, ten optimizers
-with cited pseudocode, up to eight runs racing on a lit surface or contour map, a replayable timeline, a step
+with cited pseudocode, up to eight runs racing on a lit surface or contour map (each from up to 64 starting points, with optional
+random restarts), a replayable timeline, a step
 debugger (line-by-line stepping, stopping points, the state at each line), divergence diagnosis, share links.
 How to use it: [docs/guide.md](docs/guide.md); what M1 contains: [docs/milestones/m1.md](docs/milestones/m1.md).
 See [DESIGN.md](DESIGN.md) for goals, architecture and milestones (§10 has what's next), [docs/perf/m0.md](docs/perf/m0.md) for

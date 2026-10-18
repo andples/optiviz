@@ -2,9 +2,8 @@
  * Frames: how the engine worker hands state to the render worker without either waiting for the other.
  *
  * A frame is a Float64 header plus a Float32 data area:
- * - header: H.* scalars, then from H.index the engine's frame index (crates/wasm `build_frame`: run count,
- *   minima offset/count, then RUN_STRIDE values per run: trail offset/count, shape offset/count, marker u v,
- *   start u v, health, halted)
+ * - header: H.* scalars, then from H.index the engine's frame index (crates/wasm `build_frame`: see its docs;
+ *   IH and R name the slots)
  * - data: the u, v pairs the index points into (trails, shapes, minima), then the stress-test points
  *
  * Two transports implement the same writer/reader interface:
@@ -29,8 +28,10 @@ export const H = {
 } as const;
 export const HEADER_F64 = 128;
 export const INDEX_HEAD = 8;
-export const RUN_STRIDE = 12;
-export const R = { trailOff: 0, trailN: 1, shapeOff: 2, shapeN: 3, mu: 4, mv: 5, su: 6, sv: 7, health: 8, halted: 9, du: 10, dv: 11 } as const;
+export const RUN_STRIDE = 18;
+export const R = { trailOff: 0, trailN: 1, shapeOff: 2, shapeN: 3, mu: 4, mv: 5, su: 6, sv: 7, health: 8, halted: 9, du: 10, dv: 11, okOff: 12, okN: 13, badOff: 14, badN: 15, bu: 16, bv: 17 } as const;
+/** index head: [runs, minima offset, minima count, extra starts offset, extra starts count] */
+export const IH = { runs: 0, minOff: 1, minN: 2, startsOff: 3, startsN: 4 } as const;
 
 export interface Layout {
   dataCap: number; // points in the data area (trails, shapes, minima)

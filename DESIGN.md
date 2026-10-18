@@ -639,8 +639,9 @@ In order (each a working, committed step):
    optimizers as WGSL kernels (GD, momentum, Nesterov, Adam family), each kernel tested against the Rust run
    (the M0 spike already agrees 100% on Himmelblau). CPU fallback at 512² for browsers without WebGPU.
    Shown as a third view and as an overlay on the contour map.
-3. **Many-start mode**: N starts of one optimizer drawn as a swarm with fading trails; fix threaded-WASM
-   scaling by allocating per thread instead of per start (docs/perf/m0.md).
+3. **Many-start mode**: *partly done 2026-10-19*: up to 64 starting points per run (shared by all runs) and
+   random restarts on convergence and/or failure, with each run's best point (session.rs). Still to do: run the
+   walkers on the rayon pool, and fix threaded-WASM scaling by allocating per thread (docs/perf/m0.md).
 4. **Your own functions** (§6.6): type f(x, y) with free symbols (a, b, …); a parser builds an expression graph,
    which emits WGSL/GLSL for drawing and a bytecode (later a generated WASM module) for the engine, with
    forward-mode differentiation for ∇f and ∇²f. Free symbols become coefficients with sliders, like the

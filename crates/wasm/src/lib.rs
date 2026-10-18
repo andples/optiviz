@@ -3,24 +3,29 @@
 //!
 //! Frames: `build_frame` fills two buffers the worker copies straight out of WebAssembly memory into the shared
 //! triple buffer (web/src/engine/frames.ts):
-//! - `index` (f64): [runs, minima offset, minima count, 5 reserved] then per run `RUN_STRIDE` values:
-//!   trail offset, trail count, shape offset, shape count, marker u, v, start u, v, health, halted, and the
-//!   steepest-descent direction at the marker (unit vector in u, v)
-//! - `frame` (f32): u, v pairs (surface coordinates over the view box): every trail, every shape (closed), minima
+//! - `index` (f64): [runs, minima offset, minima count, extra starts offset, extra starts count, 3 reserved]
+//!   then per run `RUN_STRIDE` values: trail offset, trail count, shape offset, shape count, primary marker
+//!   u, v, start u, v, health, halted, steepest-descent direction at the marker (unit u, v), other walkers'
+//!   markers (offset, count), failed walkers' markers (offset, count), best point found u, v
+//! - `frame` (f32): u, v pairs (surface coordinates over the view box): trails (walkers and restarts separated
+//!   by `GAP` points far outside the box, which the trail shader skips), shapes, markers, minima, starts
 
 use optiviz_core::monitor::Health;
-use optiviz_core::session::{MAX_RUNS, Session, Stop, Stops};
+use optiviz_core::session::{MAX_RUNS, MAX_STARTS, Multistart, Session, Stop, Stops};
 use optiviz_core::{Rng, multistart, optimizers, problems};
 use wasm_bindgen::prelude::*;
 
 #[cfg(feature = "threads")]
 pub use wasm_bindgen_rayon::init_thread_pool;
 
-pub const RUN_STRIDE: usize = 12;
+pub const RUN_STRIDE: usize = 18;
 pub const INDEX_HEAD: usize = 8;
 /// Longest drawn trail segment, in surface units (the view box is 2 wide), and extra points allowed per run.
 const DRAPE_STEP: f32 = 0.012;
 const DRAPE_BUDGET: usize = 6000;
+/// Separates trail segments (walkers, restarts): a point far outside the box, which the trail shader drops.
+/// (Not NaN: WGSL doesn't guarantee how comparisons with NaN behave.)
+const GAP: f32 = 1e30;
 
 #[wasm_bindgen(start)]
 pub fn start() {
@@ -129,6 +134,15 @@ impl Engine {
     pub fn max_runs(&self) -> usize {
         MAX_RUNS
     }
+    pub fn max_starts(&self) -> usize {
+        MAX_STARTS
+    }
+
+    /// Number of starting points per run and the random-restart policy; restarts the session.
+    pub fn set_multistart(&mut self, starts: usize, on_converged: bool, on_failed: bool) {
+        self.stop = None;
+        self.s.set_multistart(Multistart { starts, on_converged, on_failed });
+    }
 
     /// Every run's state for the UI, as JSON.
     pub fn runs_json(&self) -> String {
@@ -137,16 +151,23 @@ impl Engine {
             .runs
             .iter()
             .map(|r| {
+                let sm = r.summary();
                 serde_json::json!({
                     "opt": r.opt_id,
                     "params": r.params.iter().map(|(k, v)| (k.clone(), serde_json::json!(v))).collect::<serde_json::Map<_, _>>(),
-                    "health": r.health,
-                    "halted": r.halted,
-                    "f": r.f_now,
-                    "gradNorm": r.last.grad_norm,
+                    "health": sm.health,
+                    "halted": sm.halted,
+                    "f": sm.f,
+                    "gradNorm": sm.grad_norm,
                     "x": r.x(),
-                    "evals": r.evals,
-                    "diagnosis": r.diagnosis,
+                    "evals": sm.evals,
+                    "diagnosis": r.diagnosis(),
+                    "walkers": sm.walkers,
+                    "failed": sm.failed,
+                    "converged": sm.converged,
+                    "restarts": sm.restarts,
+                    "bestF": sm.best_f,
+                    "bestX": sm.best_x,
                 })
             })
             .collect();
@@ -213,7 +234,7 @@ impl Engine {
         self.s.head as f64
     }
     pub fn all_halted(&self) -> bool {
-        self.s.runs.iter().all(|r| r.halted)
+        self.s.runs.iter().all(|r| r.halted())
     }
 
     /// Stopping points from JSON: {at_iter, every, f_below, grad_below, on_diverge, line} (missing = off).
@@ -235,7 +256,8 @@ impl Engine {
     /// Lays out the current state (see the module docs). Then read `frame_ptr/len` and `index_ptr/len`.
     pub fn build_frame(&mut self) {
         let s = &self.s;
-        self.frame.clear();
+        let frame = &mut self.frame;
+        frame.clear();
         self.index.clear();
         self.index.resize(INDEX_HEAD + RUN_STRIDE * s.runs.len(), 0.0);
         self.index[0] = s.runs.len() as f64;
@@ -243,14 +265,21 @@ impl Engine {
             let (u, v) = s.to_uv(x, y);
             [u as f32, v as f32]
         };
+        let multi = s.multistart.starts > 1;
         let mut runs_idx = vec![];
         for r in &s.runs {
-            let t0 = self.frame.len() / 2;
+            let trail = r.trails();
+            let t0 = frame.len() / 2;
             // long segments are subdivided so they drape over the surface instead of cutting through it
             // (straight in x, y; each piece is lifted to the surface by the shader); a budget per run caps it
-            let mut budget = DRAPE_BUDGET;
+            let mut budget = if multi { 0 } else { DRAPE_BUDGET };
             let mut prev: Option<[f32; 2]> = None;
-            for p in r.trail().chunks(2) {
+            for p in trail.chunks(2) {
+                if p[0].is_nan() {
+                    frame.extend([GAP, GAP]);
+                    prev = None;
+                    continue;
+                }
                 let q = uv(p[0], p[1]);
                 if let Some(a) = prev {
                     let d = ((q[0] - a[0]).powi(2) + (q[1] - a[1]).powi(2)).sqrt();
@@ -259,27 +288,49 @@ impl Engine {
                     budget -= n - 1;
                     for k in 1..n {
                         let t = k as f32 / n as f32;
-                        self.frame.extend([a[0] + t * (q[0] - a[0]), a[1] + t * (q[1] - a[1])]);
+                        frame.extend([a[0] + t * (q[0] - a[0]), a[1] + t * (q[1] - a[1])]);
                     }
                 }
-                self.frame.extend(q);
+                frame.extend(q);
                 prev = Some(q);
             }
-            let tn = self.frame.len() / 2 - t0;
-            let s0 = self.frame.len() / 2;
-            if let Some(sh) = r.shape() {
-                for p in sh.chunks(2) {
-                    self.frame.extend(uv(p[0], p[1]));
+            let tn = frame.len() / 2 - t0;
+            let s0 = frame.len() / 2;
+            for p in r.shapes().chunks(2) {
+                if p[0].is_nan() {
+                    frame.extend([GAP, GAP]);
+                } else {
+                    frame.extend(uv(p[0], p[1]));
                 }
-                self.frame.extend(uv(sh[0], sh[1]));
             }
-            let sn = self.frame.len() / 2 - s0;
+            let sn = frame.len() / 2 - s0;
+            // markers: other walkers that are fine, and walkers that failed (shown hollow at their last point)
+            let pts = r.points();
+            let ok0 = frame.len() / 2;
+            for (x, h, halted) in pts.iter().skip(1) {
+                if !halted && matches!(h, Health::Ok) && x.iter().all(|v| v.is_finite()) {
+                    frame.extend(uv(x[0], x[1]));
+                }
+            }
+            let okn = frame.len() / 2 - ok0;
+            let bad0 = frame.len() / 2;
+            if multi {
+                for (x, h, halted) in pts.iter().skip(1) {
+                    if (*halted || !matches!(h, Health::Ok)) && x.iter().all(|v| v.is_finite()) {
+                        let [u, v] = uv(x[0], x[1]);
+                        let m = 1f32.max(u.abs()).max(v.abs());
+                        frame.extend([u / m, v / m]);
+                    }
+                }
+            }
+            let badn = frame.len() / 2 - bad0;
             let x = r.x();
-            let (mu, mv) = if x.iter().all(|v| v.is_finite()) { s.to_uv(x[0], x[1]) } else { (f64::NAN, f64::NAN) };
+            let finite = x.iter().all(|v| v.is_finite());
+            let (mu, mv) = if finite { s.to_uv(x[0], x[1]) } else { (f64::NAN, f64::NAN) };
             let (su, sv) = s.to_uv(s.start[0], s.start[1]);
             // steepest-descent direction at x, as a unit vector in surface coordinates (for the arrow)
             let (mut du, mut dv) = (0.0, 0.0);
-            if x.iter().all(|v| v.is_finite()) {
+            if finite {
                 let mut g = [0.0; 2];
                 s.problem().grad(x, &mut g);
                 let [(x0, x1), (y0, y1)] = s.view;
@@ -289,6 +340,15 @@ impl Engine {
                     (du, dv) = (a / n, b / n);
                 }
             }
+            let sm = r.summary();
+            let (bu, bv) = if s.multistart.starts > 1 || s.multistart.on_converged || s.multistart.on_failed {
+                match sm.best_x.as_slice() {
+                    [bx, by] if sm.best_f.is_finite() => s.to_uv(*bx, *by),
+                    _ => (f64::NAN, f64::NAN),
+                }
+            } else {
+                (f64::NAN, f64::NAN)
+            };
             runs_idx.push([
                 t0 as f64,
                 tn as f64,
@@ -298,18 +358,30 @@ impl Engine {
                 mv,
                 su,
                 sv,
-                health_code(r.health),
-                if r.halted { 1.0 } else { 0.0 },
+                health_code(r.health()),
+                if r.halted() { 1.0 } else { 0.0 },
                 du,
                 dv,
+                ok0 as f64,
+                okn as f64,
+                bad0 as f64,
+                badn as f64,
+                bu,
+                bv,
             ]);
         }
-        let m0 = self.frame.len() / 2;
+        let m0 = frame.len() / 2;
         for m in &s.manifest.minima {
-            self.frame.extend(uv(m[0], m[1]));
+            frame.extend(uv(m[0], m[1]));
         }
         self.index[1] = m0 as f64;
-        self.index[2] = (self.frame.len() / 2 - m0) as f64;
+        self.index[2] = (frame.len() / 2 - m0) as f64;
+        let st0 = frame.len() / 2;
+        for x in s.starts.iter().skip(1) {
+            frame.extend(uv(x[0], x[1]));
+        }
+        self.index[3] = st0 as f64;
+        self.index[4] = (frame.len() / 2 - st0) as f64;
         for (i, r) in runs_idx.iter().enumerate() {
             self.index[INDEX_HEAD + RUN_STRIDE * i..INDEX_HEAD + RUN_STRIDE * (i + 1)].copy_from_slice(r);
         }
@@ -409,6 +481,13 @@ mod tests {
         // Nelder–Mead draws a closed triangle: 3 vertices + the first again
         assert_eq!(e.index[INDEX_HEAD + RUN_STRIDE + 3], 4.0);
         assert_eq!(e.index[1] as usize + n_minima, total);
+        // with 8 starts: 7 more markers per run, 7 extra start rings
+        e.set_multistart(8, true, true);
+        e.step(30);
+        e.build_frame();
+        assert_eq!(e.index[4], 7.0);
+        let r = &e.index[INDEX_HEAD..];
+        assert_eq!(r[13] + r[15], 7.0);
     }
 
     #[test]
