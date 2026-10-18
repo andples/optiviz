@@ -9,6 +9,7 @@ pub mod multistart;
 pub mod optimizers;
 pub mod problems;
 pub mod rng;
+pub mod session;
 pub mod trace;
 
 pub use manifest::{Deviation, OptimizerManifest, ParamSpec, ProblemManifest, PseudoLine, Pseudocode};

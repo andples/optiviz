@@ -37,7 +37,7 @@ pub struct Monitor {
     f_best: f64,
     /// view box diameter: the yardstick for "far"
     scale: f64,
-    bounds: Vec<(f64, f64)>,
+    pub(crate) bounds: Vec<(f64, f64)>,
     grow: u32,
     fall: u32,
     last_step: f64,
