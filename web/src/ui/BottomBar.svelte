@@ -26,6 +26,7 @@
   <div class="controls">
     <button class="icon" onclick={() => app.toggle()} title={app.running ? "Pause (space)" : "Play (space)"}>{app.running ? "❚❚" : "▶"}</button>
     <button class="icon" onclick={() => app.step()} title="One iteration (.)">⏵|</button>
+    <button class="icon line" onclick={() => app.stepLine()} title="One line of the algorithm (,)">⏵<span>·</span></button>
     <button class="icon" onclick={() => app.restart()} title="Back to the start (r)">↺</button>
   </div>
   <div class="speeds" role="group" aria-label="Speed">
@@ -63,6 +64,7 @@
   .controls { display: flex; gap: 2px; }
   .icon { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; color: var(--dim); font-size: 14px; }
   .icon:hover { background: var(--track); color: var(--ink); }
+  .line span { font-size: 18px; line-height: 0; margin-left: 1px; }
   .speeds { display: flex; background: var(--track); border-radius: 7px; padding: 2px; }
   .speeds button { padding: 2px 8px; border-radius: 5px; color: var(--dim); font-size: 12px; }
   .speeds button.sel { background: var(--panel-solid); color: var(--ink); }

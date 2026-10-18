@@ -3,8 +3,11 @@
 Watch optimization algorithms work, at the scale they are really run: lit 3D loss surfaces, swarms, big TSP
 tours and real neural-network training, rendered with WebGPU (WebGL2 fallback) and computed in Rust/WebAssembly.
 
-**Status:** M0 (foundations) done; see [DESIGN.md](DESIGN.md) for goals, architecture and milestones,
-[docs/perf/m0.md](docs/perf/m0.md) for measurements and [docs/adr](docs/adr) for decisions.
+**Status:** M1 done: the 2D continuous experience. Ten problems with editable coefficients, ten optimizers
+with cited pseudocode, up to eight runs racing on a lit surface or contour map, a replayable timeline, a step
+debugger (line-by-line stepping, stopping points, the state at each line), divergence diagnosis, share links.
+See [DESIGN.md](DESIGN.md) for goals, architecture and milestones, [docs/perf/m0.md](docs/perf/m0.md) for
+measurements and [docs/adr](docs/adr) for decisions.
 
 ## Run it
 
@@ -19,7 +22,8 @@ just dev        # builds both WASM engines, serves http://localhost:5173 (cross-
 
 Useful URL parameters: `?backend=webgl2` (skip WebGPU), `?render=main` (render on the main thread),
 `?shared=0` (no SharedArrayBuffer: message-passing frames, single-threaded engine), `?stress=1000000` (a million
-extra points per frame). The **i** button shows what the browser got and live performance.
+extra points per frame). The **i** button shows what the browser got and live performance. Keys (all optional): space play/pause,
+`.` one iteration, `,` one pseudocode line, `r` restart, arrows fly the free camera, Esc back.
 
 ## Test
 

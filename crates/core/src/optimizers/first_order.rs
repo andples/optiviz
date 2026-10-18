@@ -269,8 +269,8 @@ impl Optimizer for Nesterov {
         let mut gl = vec![0.0; self.v.len()];
         p.grad(&self.look, &mut gl);
         info.evals += 1;
-        for i in 0..self.v.len() {
-            self.v[i] = self.mu * self.v[i] - self.lr * gl[i];
+        for (v, g) in self.v.iter_mut().zip(&gl) {
+            *v = self.mu * *v - self.lr * g;
         }
         tr!(trc, 2, r"\theta_t + \mu v_t" => self.look, r"\nabla f(\theta_t + \mu v_t)" => gl, r"v_{t+1}" => self.v);
         for (x, v) in self.b.x.iter_mut().zip(&self.v) {

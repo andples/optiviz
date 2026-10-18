@@ -156,6 +156,7 @@ export type RenderCmd =
   | { type: "keys"; keys: { fwd: boolean; back: boolean; left: boolean; right: boolean; up: boolean; down: boolean; fast: boolean } }
   | { type: "view"; mode: ViewMode }
   | { type: "select"; i: number }
+  | { type: "arrows"; on: boolean }
   | { type: "pick"; x: number; y: number }
   | { type: "theme"; theme: Theme };
 

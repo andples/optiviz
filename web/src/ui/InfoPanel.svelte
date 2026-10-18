@@ -20,7 +20,7 @@
     {/if}
     {#if !caps.webgpu}<div class="note">WebGPU isn't available in this browser; drawing with WebGL2.</div>{/if}
     {#if !caps.isolated}<div class="note">This page isn't cross-origin isolated, so the engine runs on one thread.</div>{/if}
-    <div class="note">Keys: space play/pause · . one step · r restart · ←↑→↓ free camera · Esc back</div>
+    <div class="note">Keys: space play/pause · . one iteration · , one line · r restart · ←↑→↓ free camera · Esc back</div>
   </aside>
 {/if}
 

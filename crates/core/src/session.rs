@@ -163,7 +163,7 @@ impl Run {
 
     /// The value of `key` in force at iteration `k` according to the log (None if never logged).
     fn value_at(&self, key: &str, k: u64) -> Option<f64> {
-        self.log.iter().filter(|(at, lk, _)| lk == key && *at <= k).last().map(|e| e.2)
+        self.log.iter().rfind(|(at, lk, _)| lk == key && *at <= k).map(|e| e.2)
     }
 
     fn apply_log_at(&mut self, k: u64) {

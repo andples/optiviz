@@ -16,6 +16,8 @@
   let canvas = $state<HTMLCanvasElement>();
   const sel = $derived(selectedRun());
   const traceFor = $derived(app.trace && app.trace.i === app.selected ? app.trace.entries : []);
+  // the descent arrow shows while paused
+  $effect(() => app.render({ type: "arrows", on: !app.running }));
 
   onMount(() => {
     (async () => {
@@ -117,6 +119,7 @@
     }
     if (e.key === " ") { e.preventDefault(); app.toggle(); }
     else if (e.key === ".") app.step();
+    else if (e.key === ",") app.stepLine();
     else if (e.key === "r") app.restart();
     else if (e.key === "Escape") {
       if (app.camMode === "free") app.setCam("orbit");
@@ -148,7 +151,7 @@
   <RunsPanel />
   {#if app.showCode && sel.manifest}
     <aside class="code panel">
-      <Pseudocode code={sel.manifest.pseudocode} entries={traceFor} running={app.running} />
+      <Pseudocode code={sel.manifest.pseudocode} entries={traceFor} running={app.running} cursor={app.lineCursor} />
     </aside>
   {/if}
   <Metrics />

@@ -9,13 +9,14 @@
    * The algorithm as its source states it (DESIGN.md §4.1), with the step debugger on top (§4.2): the lines the
    * last step executed are lit and show the values they computed; the gutter sets a stopping point on a line.
    */
-  let { code, entries, running }: { code: Pseudocode; entries: TraceEntry[]; running: boolean } = $props();
+  let { code, entries, running, cursor = null }: { code: Pseudocode; entries: TraceEntry[]; running: boolean; cursor?: number | null } = $props();
   let hover = $state<number | null>(null);
   const deviated = $derived(new Set(code.deviations.map((d) => d.line).filter((l) => l !== null)));
   /** per line: how many times the last step ran it, and the values from the last time */
   const byLine = $derived.by(() => {
     const m = new Map<number, { n: number; vars: [string, number[]][] }>();
-    for (const e of entries) {
+    const upto = cursor === null ? entries : entries.slice(0, cursor + 1);
+    for (const e of upto) {
       const cur = m.get(e.line);
       m.set(e.line, { n: (cur?.n ?? 0) + 1, vars: e.vars });
     }
@@ -35,7 +36,8 @@
       {@const t = byLine.get(i)}
       <li
         class:step={line.step}
-        class:lit={!!t && !running}
+        class:lit={!!t && !running && (cursor === null || entries[cursor]?.line === i)}
+        class:seen={!!t && !running && cursor !== null && entries[cursor]?.line !== i}
         class:dev={deviated.has(i)}
         class:hover={hover === i}
         class:stop={app.stops.line === i}
@@ -83,7 +85,8 @@
   ol { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 1px; }
   li { display: grid; grid-template-columns: 24px 1fr 12px; align-items: start; border-radius: 4px; transition: background 0.35s; color: var(--dim); }
   li.step { color: var(--ink); }
-  li.lit { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+  li.lit { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  li.seen .vals { opacity: 0.55; }
   li.hover { outline: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); }
   .gutter { color: var(--faint); font-size: 10.5px; text-align: right; padding: 3px 5px 0 0; border-radius: 4px; position: relative; }
   .gutter:not(:disabled):hover { color: var(--accent); }

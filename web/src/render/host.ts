@@ -38,6 +38,7 @@ export class RenderHost {
   private lastFrameAt = performance.now();
   private dirty = true;
   private selected = 0;
+  private arrows = false;
   private time = 0;
   /** the latest frame's index, kept for redraws without a new frame */
   private index = new Float64Array(128);
@@ -127,6 +128,10 @@ export class RenderHost {
         break;
       case "select":
         this.selected = cmd.i;
+        this.dirty = true;
+        break;
+      case "arrows":
+        this.arrows = cmd.on;
         this.dirty = true;
         break;
       case "theme":
@@ -251,6 +256,21 @@ export class RenderHost {
     if (runs > 0) {
       this.marks[2 * m] = ix[INDEX_HEAD + R.su];
       this.marks[2 * m + 1] = ix[INDEX_HEAD + R.sv];
+      m++;
+    }
+    // the steepest-descent arrow at the selected marker (shaft, then the two barbs), while paused
+    let arrowAt = -1;
+    const sr = INDEX_HEAD + RUN_STRIDE * this.selected;
+    if (this.arrows && this.selected < runs && ix[sr + R.health] === 0) {
+      const u = ix[sr + R.mu], v = ix[sr + R.mv], du = ix[sr + R.du], dv = ix[sr + R.dv];
+      if (Number.isFinite(u) && (du || dv)) {
+        const L = 0.16, b = 0.045;
+        const tu = u + L * du, tv = v + L * dv;
+        const pts = [u, v, tu, tv, tu - b * (du - 0.6 * dv), tv - b * (dv + 0.6 * du), tu, tv, tu - b * (du + 0.6 * dv), tv - b * (dv - 0.6 * du)];
+        arrowAt = m;
+        this.marks.set(pts, 2 * m);
+        m += 5;
+      }
     }
 
     for (const i of order) {
@@ -280,6 +300,11 @@ export class RenderHost {
         }
         this.item("points", "marks", markAt[i], 1, [...c, 1, size, 0.014, 1, 1]);
       }
+    }
+    if (arrowAt >= 0) {
+      const c = RUN_COLORS[this.selected % RUN_COLORS.length].rgb;
+      this.item("trail", "marks", arrowAt, 5, [...halo, 0.8, 5, 0.016, 1, 5]);
+      this.item("trail", "marks", arrowAt, 5, [...c, 1, 2.2, 0.017, 1, 5]);
     }
     // known minima, the start, the stress swarm
     this.item("points", "data", ix[1], ix[2], [...ink, 0.7, 6, 0.004, 2, 0]);

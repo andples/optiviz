@@ -56,6 +56,9 @@ class AppState {
   stats = $state<RenderStats | null>(null);
   series = $state.raw<Float64Array[]>([]);
   trace = $state<{ i: number; iter: number; entries: TraceEntry[] } | null>(null);
+  /** stepping line by line: the trace entry shown (null = show the whole last step) */
+  lineCursor = $state<number | null>(null);
+  private lineStepping = false;
   stop = $state<Stop | null>(null);
   stops = $state<Stops>({ on_diverge: true });
 
@@ -106,6 +109,8 @@ class AppState {
         break;
       case "trace":
         this.trace = { i: m.i, iter: m.iter, entries: m.entries };
+        this.lineCursor = this.lineStepping && m.entries.length ? 0 : null;
+        this.lineStepping = false;
         break;
       case "error":
         this.error = m.message;
@@ -144,6 +149,7 @@ class AppState {
 
   play() {
     this.stop = null;
+    this.lineCursor = null;
     this.running = true;
     this.engine({ type: "play" });
   }
@@ -158,7 +164,23 @@ class AppState {
   step(n = 1) {
     this.stop = null;
     this.running = false;
+    this.lineCursor = null;
     this.engine({ type: "step", n });
+  }
+  /**
+   * One pseudocode line (DESIGN.md §4.2): walks through the lines the last step executed, with their values;
+   * past the last one, runs the next iteration and starts on its first line. (The surface already shows the
+   * iterate after the step being walked through.)
+   */
+  stepLine() {
+    const n = this.trace?.i === this.selected ? this.trace.entries.length : 0;
+    if (this.lineCursor !== null && this.lineCursor < n - 1) {
+      this.lineCursor++;
+      return;
+    }
+    this.showCode = true;
+    this.step();
+    this.lineStepping = true;
   }
   restart() {
     this.stop = null;

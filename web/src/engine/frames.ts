@@ -30,7 +30,7 @@ export const H = {
 export const HEADER_F64 = 128;
 export const INDEX_HEAD = 8;
 export const RUN_STRIDE = 12;
-export const R = { trailOff: 0, trailN: 1, shapeOff: 2, shapeN: 3, mu: 4, mv: 5, su: 6, sv: 7, health: 8, halted: 9 } as const;
+export const R = { trailOff: 0, trailN: 1, shapeOff: 2, shapeN: 3, mu: 4, mv: 5, su: 6, sv: 7, health: 8, halted: 9, du: 10, dv: 11 } as const;
 
 export interface Layout {
   dataCap: number; // points in the data area (trails, shapes, minima)

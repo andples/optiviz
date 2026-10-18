@@ -4,7 +4,8 @@
 //! Frames: `build_frame` fills two buffers the worker copies straight out of WebAssembly memory into the shared
 //! triple buffer (web/src/engine/frames.ts):
 //! - `index` (f64): [runs, minima offset, minima count, 5 reserved] then per run `RUN_STRIDE` values:
-//!   trail offset, trail count, shape offset, shape count, marker u, v, start u, v, health, halted, 0, 0
+//!   trail offset, trail count, shape offset, shape count, marker u, v, start u, v, health, halted, and the
+//!   steepest-descent direction at the marker (unit vector in u, v)
 //! - `frame` (f32): u, v pairs (surface coordinates over the view box): every trail, every shape (closed), minima
 
 use optiviz_core::monitor::Health;
@@ -276,6 +277,18 @@ impl Engine {
             let x = r.x();
             let (mu, mv) = if x.iter().all(|v| v.is_finite()) { s.to_uv(x[0], x[1]) } else { (f64::NAN, f64::NAN) };
             let (su, sv) = s.to_uv(s.start[0], s.start[1]);
+            // steepest-descent direction at x, as a unit vector in surface coordinates (for the arrow)
+            let (mut du, mut dv) = (0.0, 0.0);
+            if x.iter().all(|v| v.is_finite()) {
+                let mut g = [0.0; 2];
+                s.problem().grad(x, &mut g);
+                let [(x0, x1), (y0, y1)] = s.view;
+                let (a, b) = (-g[0] * 2.0 / (x1 - x0), -g[1] * 2.0 / (y1 - y0));
+                let n = a.hypot(b);
+                if n > 0.0 && n.is_finite() {
+                    (du, dv) = (a / n, b / n);
+                }
+            }
             runs_idx.push([
                 t0 as f64,
                 tn as f64,
@@ -287,8 +300,8 @@ impl Engine {
                 sv,
                 health_code(r.health),
                 if r.halted { 1.0 } else { 0.0 },
-                0.0,
-                0.0,
+                du,
+                dv,
             ]);
         }
         let m0 = self.frame.len() / 2;

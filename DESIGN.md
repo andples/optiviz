@@ -7,7 +7,8 @@ stretching along a valley, the central path of an interior point method crossing
 underneath (loss, gradient norm, step size, temperature, diversity) update live, and you can scrub back
 through the run.
 
-Status: **M0 done** (2026-10-18): foundations and spikes, results in `docs/perf/m0.md` and `docs/adr/`. Next: M1.
+Status: **M1 done** (2026-10-18): the 2D continuous experience; M0 foundations before it (`docs/perf/m0.md`,
+`docs/adr/`). Next: M2.
 The name `optiviz` is fine for now.
 
 ---
@@ -259,6 +260,16 @@ happens, look at why it is where it is, and try what would change it.
   by side from that point; compare where each ends up. Built on the deterministic history (§6.5).
 - **Trace:** the whole run is recorded (§6.5), so stopping points can also be set after the fact and the trace
   scrubbed back to them; traces export with the config for sharing.
+
+### 4.3 When a point diverges (owner, 2026-10-18)
+
+Runs are watched every step and classified as ok, **out of view** (left the drawn box: drawn as a hollow ring
+pinned to the edge, the trail clipped at the box), **diverging** (f rising far above its start, x far away, or
+the step growing geometrically), **unbounded** (f falling without end: the landscape has no bottom) or
+**diverged** (not a finite number any more: the run halts at its last finite point, the others continue).
+Diverging and unbounded are a default stopping point: the run pauses once with a diagnosis computed from the
+local curvature ("η must be below 2/L, L ≈ 20") and actions: restart with the suggested value, zoom out to follow,
+continue anyway. Details and thresholds: `docs/adr/0006-divergence.md`.
 
 Learn mode and Research mode (§2) may default differently here (explanations on by default vs. a compact state
 table), but both have all of it.
@@ -597,6 +608,19 @@ Firefox) to confirm WebGPU there and fill in §7.4's table; headless Chromium he
   on iteration / f / ‖∇f‖ / divergence / pseudocode line, state inspection at a stop.
 - **Exit:** feels finished for 2D continuous; someone can learn the difference between Adam and momentum in
   two minutes.
+
+**Done 2026-10-18.** In place: 10 problems, each with editable coefficients (the shader, gradient and known
+minima follow; minima are found numerically when coefficients move them); 10 optimizers (GD with fixed /
+backtracking / strong-Wolfe step, momentum, Nesterov, AdaGrad, RMSProp, Adam, AdamW, Newton with modification,
+L-BFGS, Nelder–Mead), each with cited pseudocode, documented deviations and per-line tracing; up to 8 runs racing
+in lockstep from a shared start; a replayable timeline (scrub back, branch on a parameter change); surface and
+contour views with trails draped on the surface, health-aware markers and a steepest-descent arrow while paused;
+convergence charts; the step debugger basics (iteration and line stepping, stopping points on k, every n, f,
+‖∇f‖, divergence and pseudocode lines, the state at each line); divergence handling (§4.3); click-to-start;
+share links; free camera. Tests: 44 Rust, 4 GPU, 12 browser.
+Deferred from M1: learning-rate schedules (noted as a deviation in AdamW), dragging the start point with a live
+re-run, problem thumbnails in the gallery, generated TS types (hand-kept in protocol.ts), ambient occlusion,
+the gradient field overlay beyond the single arrow.
 
 ### M2: Scale on 2D
 - Basins map on the GPU (CPU fallback at smaller size). Many-start mode.
