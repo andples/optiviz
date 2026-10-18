@@ -45,4 +45,39 @@ pub struct OptimizerManifest {
     pub params: Vec<ParamSpec>,
     /// Update rule in TeX, shown with the inspector
     pub tex: &'static str,
+    pub pseudocode: Pseudocode,
+}
+
+/// The algorithm as its source states it, line for line, in TeX, plus every way the implementation differs
+/// from that statement and why. The rule (DESIGN.md §3): match the literature as closely as possible; where
+/// the code can't or shouldn't, say so here.
+#[derive(Clone, Debug, Serialize)]
+pub struct Pseudocode {
+    /// Where the pseudocode comes from: author, year, title, and the algorithm/equation number
+    pub source: &'static str,
+    pub lines: Vec<PseudoLine>,
+    pub deviations: Vec<Deviation>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct PseudoLine {
+    /// The line in TeX (keywords in \textbf{...})
+    pub tex: &'static str,
+    pub indent: u8,
+    /// Executed by every `Optimizer::step` (one loop iteration); the UI highlights these when stepping
+    pub step: bool,
+}
+
+/// A difference between the source's pseudocode and what runs. `line` is the index of the line it concerns.
+/// `what` and `why` are prose with inline TeX between `$` signs.
+#[derive(Clone, Debug, Serialize)]
+pub struct Deviation {
+    pub line: Option<usize>,
+    pub what: &'static str,
+    pub why: &'static str,
+}
+
+/// Shorthand for building pseudocode lines: (indent, executed per step, TeX).
+pub fn lines(spec: &[(u8, bool, &'static str)]) -> Vec<PseudoLine> {
+    spec.iter().map(|&(indent, step, tex)| PseudoLine { tex, indent, step }).collect()
 }

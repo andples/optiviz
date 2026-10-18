@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { boot, type Caps, type Session, type Tier } from "../app";
   import type { EngineMsg, EngineStatus, OptimizerManifest, ProblemManifest, RenderMsg, RenderStats, Theme } from "../engine/protocol";
+  import Pseudocode from "./Pseudocode.svelte";
   import Tex from "./Tex.svelte";
   import { count, sci } from "./format";
 
@@ -35,6 +36,7 @@
   let theme = $state<"light" | "dark">("light");
   let showInfo = $state(false);
   let showProblems = $state(false);
+  let showCode = $state(false);
 
   const problem = $derived(problems.find((p) => p.id === problemId));
   const opt = $derived(optimizers.find((o) => o.id === optId));
@@ -234,7 +236,13 @@
           <span class="val">{sci(v, 2)}</span>
         </label>
       {/each}
+      <button class="toggle" onclick={() => (showCode = !showCode)}>{showCode ? "Hide" : "Show"} the algorithm</button>
     </aside>
+    {#if showCode}
+      <aside class="code panel">
+        <Pseudocode code={opt.pseudocode} pulse={status?.iter ?? 0} {running} />
+      </aside>
+    {/if}
   {/if}
 
   {#if showInfo && tier && caps}
@@ -322,6 +330,9 @@
   .param .val { text-align: right; color: var(--dim); font-size: 12px; }
   input[type="range"] { width: 100%; accent-color: var(--accent); height: 18px; }
 
+  .toggle { align-self: flex-start; color: var(--dim); font-size: 12px; padding: 2px 0; }
+  .toggle:hover { color: var(--ink); }
+  .code { position: absolute; top: 96px; left: 16px; width: 430px; max-height: calc(100vh - 190px); overflow: auto; padding: 10px 12px; }
   .info { position: absolute; top: 60px; right: 290px; width: 340px; padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
   .info .dim { color: var(--dim); margin-top: -2px; word-break: break-word; }
   .info .note { color: var(--dim); font-style: italic; }
@@ -338,6 +349,7 @@
   @media (max-width: 720px) {
     .inspector { top: auto; bottom: 120px; right: 16px; left: 16px; width: auto; }
     .info { right: 16px; left: 16px; width: auto; }
+    .code { display: none; }
     .readout { min-width: 0; }
   }
 </style>

@@ -9,7 +9,7 @@ pub mod optimizers;
 pub mod problems;
 pub mod rng;
 
-pub use manifest::{OptimizerManifest, ParamSpec, ProblemManifest};
+pub use manifest::{Deviation, OptimizerManifest, ParamSpec, ProblemManifest, PseudoLine, Pseudocode};
 pub use optimizers::Optimizer;
 pub use problems::Problem;
 pub use rng::Rng;

@@ -1,7 +1,7 @@
 //! First-order optimizers as state machines stepped one iteration at a time. M0 has the three the first view
 //! needs; M1 adds the rest of DESIGN.md §3.1 against the same trait.
 
-use crate::manifest::{OptimizerManifest, ParamSpec};
+use crate::manifest::{Deviation, OptimizerManifest, ParamSpec, Pseudocode, lines};
 use crate::{Problem, Rng, StepInfo};
 
 pub trait Optimizer: Send {
@@ -24,6 +24,16 @@ pub fn by_id(id: &str) -> Option<Box<dyn Optimizer>> {
         "adam" => Box::new(Adam::default()),
         _ => return None,
     })
+}
+
+/// Every source states a convergence test; here the run continues until you stop it (or the iterate stops being
+/// finite), because watching what happens after "convergence" is part of the point.
+fn no_stopping_test(line: usize) -> Deviation {
+    Deviation {
+        line: Some(line),
+        what: "No convergence test: the loop runs until you pause it, or until $x_k$ is no longer finite (shown as diverged).",
+        why: "Stopping rules (tolerances on $\\lVert\\nabla f\\rVert$ or on progress) will be selectable stopping points in the step debugger; by default you watch the whole run.",
+    }
 }
 
 fn lr_spec(default: f64) -> ParamSpec {
@@ -80,6 +90,29 @@ impl Optimizer for GradientDescent {
             family: "first-order",
             params: vec![lr_spec(1e-3)],
             tex: r"x_{k+1} = x_k - \eta\,\nabla f(x_k)",
+            pseudocode: Pseudocode {
+                source: "Boyd & Vandenberghe (2004), Convex Optimization, §9.3, Algorithm 9.3 (gradient descent method)",
+                lines: lines(&[
+                    (0, false, r"\textbf{given } \text{a starting point } x \in \operatorname{dom} f"),
+                    (0, false, r"\textbf{repeat}"),
+                    (1, true, r"\Delta x := -\nabla f(x)"),
+                    (
+                        1,
+                        true,
+                        r"\textit{Line search.}\ \text{Choose step size } t \text{ via exact or backtracking line search}",
+                    ),
+                    (1, true, r"\textit{Update.}\ x := x + t\,\Delta x"),
+                    (0, false, r"\textbf{until } \text{stopping criterion is satisfied}"),
+                ]),
+                deviations: vec![
+                    Deviation {
+                        line: Some(3),
+                        what: "No line search: the step size is the fixed $t = \\eta$ you set.",
+                        why: "Fixed-step gradient descent is the version most people meet first and shows step-size effects (zig-zag, divergence) directly. Armijo and Wolfe line searches arrive as separate, pluggable choices.",
+                    },
+                    no_stopping_test(5),
+                ],
+            },
         }
     }
     fn init(&mut self, x0: &[f64]) {
@@ -137,6 +170,22 @@ impl Optimizer for Momentum {
                 },
             ],
             tex: r"v_{k+1} = \beta v_k + \nabla f(x_k),\quad x_{k+1} = x_k - \eta\, v_{k+1}",
+            pseudocode: Pseudocode {
+                source: "Polyak (1964), Some methods of speeding up the convergence of iteration methods, eq. (9) (heavy-ball method)",
+                lines: lines(&[
+                    (0, false, r"\textbf{given } x^0,\ \alpha > 0,\ 0 \le \beta < 1;\quad x^{-1} := x^0"),
+                    (0, false, r"\textbf{for } k = 0, 1, 2, \dots"),
+                    (1, true, r"x^{k+1} = x^k - \alpha\,\nabla f(x^k) + \beta\,(x^k - x^{k-1})"),
+                ]),
+                deviations: vec![
+                    Deviation {
+                        line: Some(2),
+                        what: "Computed in velocity form: $v_{k+1} = \\beta v_k + \\nabla f(x_k)$, $x_{k+1} = x_k - \\eta\\, v_{k+1}$ with $v_0 = 0$ and $\\eta = \\alpha$.",
+                        why: "Identical in exact arithmetic ($x_{k+1} - x_k = -\\eta v_{k+1}$ unrolls to Polyak's update) and the usual form in practice. Two visible consequences: rounding differs slightly, and changing $\\eta$ mid-run rescales the remembered velocity's effect, where Polyak's form would keep the last step's length.",
+                    },
+                    no_stopping_test(1),
+                ],
+            },
         }
     }
     fn init(&mut self, x0: &[f64]) {
@@ -219,6 +268,51 @@ impl Optimizer for Adam {
                 },
             ],
             tex: r"m \leftarrow \beta_1 m + (1-\beta_1) g,\; v \leftarrow \beta_2 v + (1-\beta_2) g^2,\; x \leftarrow x - \eta\,\frac{\hat m}{\sqrt{\hat v}+\epsilon}",
+            pseudocode: Pseudocode {
+                source: "Kingma & Ba (2015), Adam: A Method for Stochastic Optimization, Algorithm 1",
+                lines: lines(&[
+                    (0, false, r"\textbf{Require: } \alpha \text{: stepsize}"),
+                    (
+                        0,
+                        false,
+                        r"\textbf{Require: } \beta_1, \beta_2 \in [0, 1) \text{: exponential decay rates for the moment estimates}",
+                    ),
+                    (
+                        0,
+                        false,
+                        r"\textbf{Require: } f(\theta) \text{: stochastic objective function with parameters } \theta",
+                    ),
+                    (0, false, r"\textbf{Require: } \theta_0 \text{: initial parameter vector}"),
+                    (0, false, r"m_0 \leftarrow 0;\quad v_0 \leftarrow 0;\quad t \leftarrow 0"),
+                    (0, false, r"\textbf{while } \theta_t \text{ not converged } \textbf{do}"),
+                    (1, true, r"t \leftarrow t + 1"),
+                    (1, true, r"g_t \leftarrow \nabla_\theta f_t(\theta_{t-1})"),
+                    (1, true, r"m_t \leftarrow \beta_1 \cdot m_{t-1} + (1 - \beta_1) \cdot g_t"),
+                    (1, true, r"v_t \leftarrow \beta_2 \cdot v_{t-1} + (1 - \beta_2) \cdot g_t^2"),
+                    (1, true, r"\hat m_t \leftarrow m_t / (1 - \beta_1^t)"),
+                    (1, true, r"\hat v_t \leftarrow v_t / (1 - \beta_2^t)"),
+                    (
+                        1,
+                        true,
+                        r"\theta_t \leftarrow \theta_{t-1} - \alpha \cdot \hat m_t / (\sqrt{\hat v_t} + \epsilon)",
+                    ),
+                    (0, false, r"\textbf{end while}"),
+                    (0, false, r"\textbf{return } \theta_t"),
+                ]),
+                deviations: vec![
+                    Deviation {
+                        line: Some(0),
+                        what: "The stepsize $\\alpha$ is labelled $\\eta$ in the controls.",
+                        why: "Every optimizer here uses $\\eta$ for its step size so they can be compared side by side; the update is the same.",
+                    },
+                    Deviation {
+                        line: Some(7),
+                        what: "$f_t = f$: the objective is deterministic, so $g_t$ is the exact gradient.",
+                        why: "The test surfaces are exact functions. Noisy (minibatch-like) gradients will be an option on the problem, at which point $f_t$ varies with $t$ as in the paper.",
+                    },
+                    no_stopping_test(5),
+                ],
+            },
         }
     }
     fn init(&mut self, x0: &[f64]) {
@@ -308,6 +402,21 @@ mod tests {
             for spec in o.manifest().params {
                 assert!(o.set_param(spec.key, spec.default), "{id}.{}", spec.key);
                 assert!(spec.min <= spec.default && spec.default <= spec.max);
+            }
+        }
+    }
+
+    #[test]
+    fn every_optimizer_has_sourced_pseudocode() {
+        for &id in IDS {
+            let pc = by_id(id).unwrap().manifest().pseudocode;
+            assert!(pc.source.contains('(') && pc.source.len() > 20, "{id}: cite the source");
+            assert!(pc.lines.iter().any(|l| l.step), "{id}: mark the lines a step executes");
+            for d in &pc.deviations {
+                if let Some(l) = d.line {
+                    assert!(l < pc.lines.len(), "{id}: deviation points past the last line");
+                }
+                assert!(!d.what.is_empty() && !d.why.is_empty());
             }
         }
     }

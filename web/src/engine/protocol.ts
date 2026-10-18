@@ -23,12 +23,18 @@ export interface ProblemManifest {
   log_height: boolean;
   start: number[];
 }
+export interface Pseudocode {
+  source: string;
+  lines: { tex: string; indent: number; step: boolean }[];
+  deviations: { line: number | null; what: string; why: string }[];
+}
 export interface OptimizerManifest {
   id: string;
   name: string;
   family: string;
   params: ParamSpec[];
   tex: string;
+  pseudocode: Pseudocode;
 }
 
 /** Steps per second; 0 = as fast as possible */
