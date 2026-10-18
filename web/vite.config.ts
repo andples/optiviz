@@ -10,7 +10,8 @@ const isolation = {
 
 export default defineConfig({
   plugins: [svelte()],
-  server: { headers: isolation, port: 5173 },
+  // /shaders sits beside web/ and is shared with the native kernel tests
+  server: { headers: isolation, port: 5173, fs: { allow: [".."] } },
   preview: { headers: isolation, port: 4173 },
   worker: { format: "es" },
   build: {

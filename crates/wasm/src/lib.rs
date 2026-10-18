@@ -207,8 +207,8 @@ impl Points {
     pub fn advance(&mut self, dt: f32) {
         self.t += dt;
         let t = self.t;
-        for p in self.xy.chunks_exact_mut(2) {
-            let (x, y) = (p[0], p[1]);
+        for p in self.xy.as_chunks_mut::<2>().0 {
+            let [x, y] = *p;
             let (u, v) = ((3.0 * y + t).sin(), (3.0 * x - t).cos());
             p[0] = (x + dt * 0.3 * u).clamp(-1.0, 1.0);
             p[1] = (y + dt * 0.3 * v).clamp(-1.0, 1.0);
