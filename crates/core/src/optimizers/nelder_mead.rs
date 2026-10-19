@@ -202,7 +202,9 @@ impl Optimizer for NelderMead {
         true
     }
     fn shape(&self) -> Option<Vec<f64>> {
-        Some(self.v.concat())
+        let mut s = self.v.concat();
+        s.extend_from_slice(&self.v[0]); // closed
+        Some(s)
     }
 }
 

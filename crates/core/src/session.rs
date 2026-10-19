@@ -422,7 +422,7 @@ impl Run {
     pub fn metrics(&self) -> &[[f64; 4]] {
         &self.metrics
     }
-    /// Shapes to draw (Nelder–Mead's simplices), closed, separated by NaN pairs.
+    /// Shapes to draw (simplices, trust regions, trial steps), separated by NaN pairs.
     pub fn shapes(&self) -> Vec<f64> {
         let mut out = vec![];
         for w in &self.walkers {
@@ -431,7 +431,6 @@ impl Run {
                     out.extend([f64::NAN, f64::NAN]);
                 }
                 out.extend_from_slice(&sh);
-                out.extend_from_slice(&sh[..2]);
             }
         }
         out

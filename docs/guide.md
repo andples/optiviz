@@ -34,8 +34,8 @@ Up to eight runs race in lockstep from the same start, each in its own colour. *
 optimizer; × removes one; click a run to select it (its trail is drawn on top and its parameters show below).
 
 Optimizers: gradient descent (fixed step, backtracking or strong-Wolfe line search), momentum (heavy ball),
-Nesterov, AdaGrad, RMSProp, Adam, AdamW, Newton's method (with Hessian modification), L-BFGS, Nelder–Mead (its
-simplex is drawn). Parameters use the mathematical symbols (η, β₁, ρ, …) with a slider (log scale where it
+Nesterov, AdaGrad, RMSProp, Adam, AdamW, Newton's method (with Hessian modification), trust region, L-BFGS,
+Nelder–Mead (its simplex is drawn). Parameters use the mathematical symbols (η, β₁, ρ, …) with a slider (log scale where it
 makes sense) and an exact-value field; changes apply from the current iteration on.
 
 ## Several starting points and random restarts
@@ -53,6 +53,22 @@ At the top of the runs panel:
 Under each run: how many points, restarts so far, how many are failing, and the best f. With several points or
 restarts on failure, divergence doesn't pause the run (it would interrupt constantly); failing points are
 shown hollow and counted instead.
+
+## Trust region
+
+The trust-region method (Nocedal & Wright, Algorithm 4.1) builds a quadratic model of f around the current
+point and only trusts it inside a circle of radius Δ. Choose how the step inside the circle is found: the
+**Cauchy point** (the best step along −∇f), the **dogleg** (from the Cauchy point bending towards the Newton
+step) or the **exact** solution. On the surface or contour map:
+
+- the solid circle is the region the next step will search;
+- the dashed circle is the region the last step was chosen in, and the line from its centre is that step's
+  path (for the dogleg: centre → Cauchy point → the step);
+- a cross marks a trial point that was rejected (the point stays where it was and the region shrinks).
+
+Open the algorithm and step with `.`: line 4 shows ρ, the actual decrease divided by the one the model
+predicted. ρ < ¼ shrinks the region to a quarter, ρ > ¾ with a step on the boundary doubles it, and the step is
+accepted when ρ > η. The contour view reads best on rippled landscapes.
 
 ## Watching and stepping
 

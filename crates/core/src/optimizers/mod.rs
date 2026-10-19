@@ -9,11 +9,13 @@ mod lbfgs;
 pub mod linesearch;
 mod nelder_mead;
 mod newton;
+mod trust_region;
 
 pub use first_order::{AdaGrad, Adam, AdamW, GradientDescent, Momentum, Nesterov, RmsProp};
 pub use lbfgs::Lbfgs;
 pub use nelder_mead::NelderMead;
 pub use newton::Newton;
+pub use trust_region::TrustRegion;
 
 use crate::manifest::{Deviation, OptimizerManifest, ParamSpec};
 use crate::trace::Trace;
@@ -29,15 +31,27 @@ pub trait Optimizer: Send {
     fn x(&self) -> &[f64];
     /// Live tweak; returns false for an unknown key. State (momentum, moments, memory) is kept.
     fn set_param(&mut self, key: &str, v: f64) -> bool;
-    /// Extra geometry to draw, as a closed polygon of points (Nelder–Mead's simplex).
+    /// Extra geometry to draw: polylines of x, y pairs, separated by NaN pairs (Nelder–Mead's simplex, a trust
+    /// region and its trial step). Closed shapes repeat their first point.
     fn shape(&self) -> Option<Vec<f64>> {
         None
     }
 }
 
 /// Gallery order.
-pub const IDS: &[&str] =
-    &["gd", "momentum", "nesterov", "adagrad", "rmsprop", "adam", "adamw", "newton", "lbfgs", "nelder-mead"];
+pub const IDS: &[&str] = &[
+    "gd",
+    "momentum",
+    "nesterov",
+    "adagrad",
+    "rmsprop",
+    "adam",
+    "adamw",
+    "newton",
+    "trust-region",
+    "lbfgs",
+    "nelder-mead",
+];
 
 pub fn by_id(id: &str) -> Option<Box<dyn Optimizer>> {
     Some(match id {
@@ -49,6 +63,7 @@ pub fn by_id(id: &str) -> Option<Box<dyn Optimizer>> {
         "adam" => Box::new(Adam::default()),
         "adamw" => Box::new(AdamW::default()),
         "newton" => Box::new(Newton::default()),
+        "trust-region" => Box::new(TrustRegion::default()),
         "lbfgs" => Box::new(Lbfgs::default()),
         "nelder-mead" => Box::new(NelderMead::default()),
         _ => return None,
@@ -114,6 +129,11 @@ mod tests {
         let p = problems::by_id("bowl", 2).unwrap();
         for &id in IDS {
             let mut o = by_id(id).unwrap();
+            if id == "trust-region" {
+                let f = run(o.as_mut(), p.as_ref(), &[-1.8, 1.6], 200);
+                assert!(f < 1e-12, "{id}: f = {f}");
+                continue;
+            }
             let lr = match id {
                 "adam" | "adamw" => 0.02,
                 "rmsprop" => 0.002,

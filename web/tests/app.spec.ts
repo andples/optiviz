@@ -146,3 +146,16 @@ test("several random starting points and random restarts", async ({ page }) => {
   await page.reload();
   await expect(page.locator(".walk")).toContainText("16 points", { timeout: 20_000 });
 });
+
+test("trust region: pseudocode shows ρ and the radius update", async ({ page }) => {
+  await open(page, "", share({ p: "rosenbrock", r: [{ o: "trust-region", p: { solver: 1, delta0: 0.4 } }], v: "contour" }));
+  await page.getByTitle("Pause (space)").click();
+  await page.getByRole("button", { name: "Show the algorithm" }).click();
+  await page.getByTitle("One iteration (.)").click();
+  await expect(page.locator(".code")).toContainText("Nocedal & Wright (2006)");
+  await expect(page.locator(".code li.lit")).toHaveCount(4); // subproblem, ρ, one radius rule, one x rule
+  await expect(page.locator(".code")).toContainText("ρ");
+  await page.getByRole("group", { name: "how the step inside the region is chosen" }).getByRole("button", { name: "exact" }).click();
+  await page.getByTitle("One iteration (.)").click();
+  await expect(page.locator(".code li.lit")).toHaveCount(4);
+});
